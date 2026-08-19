@@ -381,3 +381,34 @@ describe('transport discipline', () => {
     ).rejects.toBeInstanceOf(ProtocolError)
   })
 })
+
+describe('the default fetch and browser method semantics', () => {
+  it('never calls the global fetch detached - a browser would throw Illegal invocation', async () => {
+    // A stand-in for window.fetch: a method that, like every DOM method,
+    // demands its receiver. Node and DOM test environments do not enforce
+    // this, which is exactly why it must be simulated here.
+    const original = globalThis.fetch
+    class BrowserWindow {
+      async fetch(this: unknown, _input: RequestInfo | URL, _init?: RequestInit): Promise<Response> {
+        // WebIDL receiver rules: undefined/null coerces to the global,
+        // the global itself is fine, ANY other object fails the brand
+        // check - which is what `options.fetch(...)` used to hand it.
+        if (this !== undefined && this !== null && this !== globalThis && !(this instanceof BrowserWindow)) {
+          throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation")
+        }
+        return new Response(
+          JSON.stringify({tag: 'payRequest', callback: 'https://mint.example/cb', minSendable: 1000, maxSendable: 2000, metadata: '[]'}),
+          {status: 200, headers: {'content-type': 'application/json'}}
+        )
+      }
+    }
+    const fakeWindow = new BrowserWindow()
+    globalThis.fetch = fakeWindow.fetch as typeof fetch
+    try {
+      const info = await fetchPayRequest('https://mint.example/.well-known/lnurlp/mint')
+      expect(info.tag).toBe('payRequest')
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+})

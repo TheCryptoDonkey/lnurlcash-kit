@@ -23,7 +23,12 @@ export type ResolvedOptions = Required<Omit<LnurlcashOptions, 'fetch'>> & {
 }
 
 export const resolveOptions = (options: LnurlcashOptions = {}): ResolvedOptions => ({
-  fetch: options.fetch ?? globalThis.fetch,
+  // Wrapped, never referenced bare: in a browser window.fetch is a method
+  // that demands its receiver, and calling a detached copy throws
+  // 'Illegal invocation'. Node and DOM test environments never enforce
+  // that, so only a REAL browser catches the bare form - the worst
+  // possible place to find out.
+  fetch: options.fetch ?? ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)),
   timeoutMs: options.timeoutMs ?? 30_000,
   offline: options.offline ?? false,
   randomSecret: options.randomSecret ?? defaultRandomSecret
