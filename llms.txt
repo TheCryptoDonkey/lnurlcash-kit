@@ -1,0 +1,66 @@
+# lnurlcash-kit
+
+LNURLcash (LUD-25) bearer note client for TypeScript. ESM-only, Node 22+,
+browsers, Deno, Bun. MIT.
+
+Install: npm install lnurlcash-kit
+
+## What this is
+
+LNURLcash notes are LUD-03 withdrawRequest links whose k1 IS the asset:
+lnurlw://mint.example/w?k1=<32-byte-hex>&amount=<msat>. Whoever knows the k1
+can spend it. Amounts are ALWAYS integer milli-satoshis.
+
+Draft spec: https://github.com/lnurl/luds/pull/301
+Reference mint: https://github.com/dni/lnurl-mint
+Reference wallet: https://github.com/dni/lnurl-wallet
+
+## Core API
+
+resolveNoteInput(text) -> url | null    accepts bech32 LNURL, lnurlw://, https
+fetchNoteInfo(url, opts?) -> {callback, k1, maxWithdrawable, mintPubkey?}
+rotateNote(callback, k1, opts?) -> {k1, signature?}
+splitNote(callback, k1s, amountMsat, opts?) -> {k1, change, signature?, changeSignature?}
+mergeNotes(callback, k1s, opts?) -> {k1, signature?}
+meltNote(callback, k1, bolt11, opts?) -> {pr?, verify?}
+settleNote(baseUrl, k1, expectedMsat, sig?, opts?) -> {k1, amountMsat, signature?, callback}
+probeBurnedNote(url, opts?) -> 'live' | 'gone' | 'unknown'
+verifyNoteSignature(k1, amountMsat, sigHex, mintPubkeyHex) -> boolean
+fetchPayRequest(url, opts?) / requestInvoice(cb, msat, opts?) / fetchInvoiceVerification(url, opts?)
+parseMintFee(metadata) / applyMintFee(gross, fee) / grossUpForMintFee(net, fee)
+createClient(opts) -> all of the above with opts bound
+
+Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
+
+## Rules an implementation MUST follow
+
+1. maxWithdrawable from fetchNoteInfo is the ONLY authoritative value. The
+   `amount` in a note URL is an unverified claim.
+2. On rotate/split/merge the WALLET generates the replacement secret and
+   discloses only sha256(secret). Never accept a service-supplied k1.
+3. Catch AmbiguousMutationError, PERSIST err.newSecrets before anything
+   else, then call probeBurnedNote to learn what happened. Treating it as
+   failure destroys money the service may already have minted.
+4. RequestRefusedError means nothing was sent - safe to treat as no-op.
+5. A melt's OK means IN FLIGHT, not spent. PendingNoteError means retry, not
+   spent.
+6. Rotate immediately after claiming a minted note: the mint generated that
+   preimage, and LUD-21 verify exposes it to anyone who saw the invoice.
+7. Never log note URLs. The secret is in the query string.
+8. Never branch on error message text. Branch on the error class.
+
+## Error classes
+
+RequestRefusedError    nothing sent, note untouched
+ServiceRejectedError   processed and refused (definitive)
+  PendingNoteError     a melt is in flight on this k1 - retry
+  NoteSpentError       authoritative: already burned
+  NoteUnknownError     service does not recognise it
+AmbiguousMintError     outcome UNKNOWN - assume nothing
+  AmbiguousMutationError  carries .newSecrets - persist them
+ProtocolError          a non-mutating response did not match the spec
+
+## Conformance
+
+Vectors and an adversarial mock mint:
+https://github.com/TheCryptoDonkey/lnurlcash-conformance

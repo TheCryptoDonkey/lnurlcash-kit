@@ -1,0 +1,280 @@
+// The vectors describe what goes on the wire and what comes back. This
+// suite holds the library to both, with no real network involved: a stub
+// fetch stands in for the SERVICE, so a case can be exactly as hostile as
+// the vector says it is.
+
+import {describe, expect, it} from 'vitest'
+import {readFileSync} from 'node:fs'
+import {createRequire} from 'node:module'
+import {
+  AmbiguousMintError,
+  NoteSpentError,
+  NoteUnknownError,
+  PendingNoteError,
+  ProtocolError,
+  RequestRefusedError,
+  ServiceRejectedError,
+  fetchInvoiceVerification,
+  fetchNoteInfo,
+  fetchPayRequest,
+  meltNote,
+  mergeNotes,
+  mergeNotesWithHash,
+  requestInvoice,
+  rotateNoteWithHash,
+  splitNote,
+  splitNoteWithHash
+} from '../src/index.js'
+
+const require = createRequire(import.meta.url)
+const load = (name: string): any =>
+  JSON.parse(
+    readFileSync(require.resolve(`lnurlcash-conformance/vectors/${name}`), 'utf8')
+  )
+
+const jsonFetch = (body: unknown, status = 200): typeof fetch =>
+  async () =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: {'content-type': 'application/json'}
+    })
+
+const rawFetch = (body: string, status = 200): typeof fetch =>
+  async () => new Response(body, {status})
+
+const capturingFetch = (seen: string[]): typeof fetch => async input => {
+  seen.push(input.toString())
+  return new Response(JSON.stringify({status: 'OK'}), {
+    headers: {'content-type': 'application/json'}
+  })
+}
+
+const params = (url: string): [string, string][] =>
+  [...new URL(url).searchParams.entries()].sort()
+
+describe('callback request vectors', () => {
+  const vectors = load('callbacks.json')
+
+  for (const c of vectors.cases) {
+    it(`builds the request for: ${c.name}`, async () => {
+      const seen: string[] = []
+      const opts = {fetch: capturingFetch(seen)}
+      const p = c.params
+
+      if (c.op === 'melt') {
+        await meltNote(c.callback, p.k1[0], p.pr, opts)
+      } else if (c.op === 'rotate') {
+        await rotateNoteWithHash(c.callback, p.k1[0], p.h, opts)
+      } else if (c.op === 'split') {
+        await splitNoteWithHash(c.callback, p.k1, p.amountMsat, p.h, p.h2, opts)
+      } else if (c.op === 'merge') {
+        await mergeNotesWithHash(c.callback, p.k1, p.h, opts)
+      }
+
+      expect(seen).toHaveLength(1)
+      expect(params(seen[0]!)).toEqual(
+        [...c.expectQuery].sort((a: string[], b: string[]) =>
+          a[0]! === b[0]! ? a[1]!.localeCompare(b[1]!) : a[0]!.localeCompare(b[0]!)
+        )
+      )
+    })
+  }
+
+  // The remaining rejected vectors - a melt with several k1, a melt with an
+  // amount, a rotate with no h, a split with no h2 - are not expressible
+  // through this library at all: meltNote takes exactly one k1 and no
+  // amount, and the hash arguments are required parameters. The one case
+  // that IS expressible is an empty note list, so it gets a real assertion.
+  it('refuses a mutation naming no note', async () => {
+    const seen: string[] = []
+    const opts = {fetch: capturingFetch(seen)}
+    await expect(
+      mergeNotes('https://mint.example/w/cb', [], opts)
+    ).rejects.toBeInstanceOf(RequestRefusedError)
+    await expect(
+      splitNote('https://mint.example/w/cb', [], 1000, opts)
+    ).rejects.toBeInstanceOf(RequestRefusedError)
+    expect(seen).toHaveLength(0)
+  })
+})
+
+describe('response classification vectors', () => {
+  const vectors = load('responses.json')
+  const K1 = 'a'.repeat(64)
+  const H = 'b'.repeat(64)
+  const CB = 'https://mint.example/w/cb'
+
+  const drive = (c: any) => {
+    if (c.transportError) {
+      return rotateNoteWithHash(CB, K1, H, {
+        fetch: async () => {
+          throw new TypeError('network error')
+        }
+      })
+    }
+    if (c.timeout) {
+      return rotateNoteWithHash(CB, K1, H, {
+        fetch: async () => {
+          const err = new Error('timed out')
+          err.name = 'TimeoutError'
+          throw err
+        }
+      })
+    }
+    const stub =
+      c.bodyRaw !== undefined
+        ? rawFetch(c.bodyRaw, c.http)
+        : jsonFetch(c.body, c.http)
+    return rotateNoteWithHash(CB, K1, H, {fetch: stub})
+  }
+
+  for (const c of vectors.cases) {
+    it(`classifies as ${c.expect}: ${c.name}`, async () => {
+      if (c.expect === 'ok') {
+        const result = await drive(c)
+        if (c.signature) expect(result.signature).toBe(c.signature)
+        return
+      }
+      const err = await drive(c).catch(e => e)
+      if (c.expect === 'pending') expect(err).toBeInstanceOf(PendingNoteError)
+      else if (c.expect === 'spent') expect(err).toBeInstanceOf(NoteSpentError)
+      else if (c.expect === 'unknown') expect(err).toBeInstanceOf(NoteUnknownError)
+      else if (c.expect === 'ambiguous') expect(err).toBeInstanceOf(AmbiguousMintError)
+      else if (c.expect === 'error') {
+        expect(err).toBeInstanceOf(ServiceRejectedError)
+        // a definitive refusal for some other reason must not be mistaken
+        // for one of the note-specific outcomes a holder acts on
+        expect(err).not.toBeInstanceOf(PendingNoteError)
+        expect(err).not.toBeInstanceOf(NoteSpentError)
+        expect(err).not.toBeInstanceOf(NoteUnknownError)
+      }
+    })
+  }
+
+  it('returns both signatures from a split', async () => {
+    const c = vectors.cases.find((v: any) => v.body?.sig2)
+    const result = await splitNoteWithHash(
+      CB,
+      [K1],
+      5000,
+      H,
+      'c'.repeat(64),
+      {fetch: jsonFetch(c.body)}
+    )
+    expect(result.signature).toBe(c.signature)
+    expect(result.changeSignature).toBe(c.changeSignature)
+  })
+
+  it('returns a melt proof when the service offers one', async () => {
+    const c = vectors.cases.find((v: any) => v.body?.verify && v.body?.pr)
+    const result = await meltNote(CB, K1, 'lnbc210n1pjq', {
+      fetch: jsonFetch(c.body)
+    })
+    expect(result.verify).toBe(c.body.verify)
+    expect(result.pr).toBe(c.body.pr)
+  })
+})
+
+describe('withdrawRequest response vectors', () => {
+  const vectors = load('withdraw-info.json')
+
+  for (const c of vectors.accepted) {
+    it(`accepts: ${c.name}`, async () => {
+      const info = await fetchNoteInfo(vectors.queriedUrl, {
+        fetch: jsonFetch(c.body)
+      })
+      expect(info.maxWithdrawable).toBe(c.maxWithdrawable)
+    })
+  }
+
+  for (const c of vectors.rejected) {
+    it(`rejects: ${c.name}`, async () => {
+      await expect(
+        fetchNoteInfo(vectors.queriedUrl, {fetch: jsonFetch(c.body)})
+      ).rejects.toBeInstanceOf(ProtocolError)
+    })
+  }
+
+  it('never puts the signature on the wire', async () => {
+    const seen: string[] = []
+    await fetchNoteInfo(vectors.queriedUrl, {
+      fetch: async input => {
+        seen.push(input.toString())
+        return new Response(JSON.stringify(vectors.accepted[0].body), {
+          headers: {'content-type': 'application/json'}
+        })
+      }
+    })
+    for (const field of vectors.requestMustNotSend) {
+      expect(seen[0]).not.toContain(`${field}=`)
+    }
+    for (const field of vectors.requestMustSendUnchanged) {
+      expect(seen[0]).toContain(`${field}=`)
+    }
+  })
+})
+
+describe('payRequest vectors', () => {
+  const vectors = load('pay-request.json')
+
+  for (const c of vectors.accepted) {
+    it(`accepts: ${c.name}`, async () => {
+      const pay = await fetchPayRequest('https://mint.example/.well-known/lnurlp/mint', {
+        fetch: jsonFetch(c.body)
+      })
+      expect(pay.withdrawLink ?? null).toBe(c.withdrawLink)
+      expect(pay.mintFee ?? null).toEqual(c.mintFee)
+    })
+  }
+
+  for (const c of vectors.rejected) {
+    it(`rejects: ${c.name}`, async () => {
+      await expect(
+        fetchPayRequest('https://mint.example/.well-known/lnurlp/mint', {
+          fetch: jsonFetch(c.body)
+        })
+      ).rejects.toBeInstanceOf(ProtocolError)
+    })
+  }
+
+  for (const c of vectors.invoice.accepted) {
+    it(`accepts an invoice: ${c.name}`, async () => {
+      const result = await requestInvoice('https://mint.example/p/cb', c.requestedMsat, {
+        fetch: jsonFetch(c.body)
+      })
+      expect(result.pr).toBe(c.body.pr)
+      expect(result.disposable).toBe(c.disposable)
+      expect(result.verify ?? null).toBe(c.verify ?? null)
+    })
+  }
+
+  for (const c of vectors.invoice.rejected) {
+    it(`rejects an invoice: ${c.name}`, async () => {
+      await expect(
+        requestInvoice('https://mint.example/p/cb', c.requestedMsat, {
+          fetch: jsonFetch(c.body)
+        })
+      ).rejects.toBeInstanceOf(ProtocolError)
+    })
+  }
+
+  for (const c of vectors.verify.accepted) {
+    it(`accepts a verify response: ${c.name}`, async () => {
+      const result = await fetchInvoiceVerification('https://mint.example/verify/ab', {
+        fetch: jsonFetch(c.body)
+      })
+      expect(result.settled).toBe(c.settled)
+      expect(result.preimage).toBe(c.preimage)
+    })
+  }
+
+  for (const c of vectors.verify.rejected) {
+    it(`rejects a verify response: ${c.name}`, async () => {
+      await expect(
+        fetchInvoiceVerification('https://mint.example/verify/ab', {
+          fetch: jsonFetch(c.body)
+        })
+      ).rejects.toBeInstanceOf(ProtocolError)
+    })
+  }
+})

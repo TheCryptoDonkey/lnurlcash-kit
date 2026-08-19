@@ -1,0 +1,55 @@
+{
+  "name": "lnurlcash-kit",
+  "version": "0.1.0",
+  "description": "LNURLcash (LUD-25) bearer note client for TypeScript - mint, rotate, split, merge, melt, and verify offline",
+  "author": "TheCryptoDonkey",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "lnurl",
+    "lnurlcash",
+    "lud-25",
+    "lightning",
+    "bitcoin",
+    "bearer",
+    "ecash"
+  ],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "THREAT-MODEL.md",
+    "llms.txt"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.3.0",
+    "@noble/hashes": "^2.3.0",
+    "@scure/base": "^1.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "lnurlcash-conformance": "file:../lnurlcash-conformance",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # the conformance vectors are a file: dependency while both repos are
+      # unpublished - check them out alongside so the suite can load them
+      - uses: actions/checkout@v4
+        with:
+          repository: TheCryptoDonkey/lnurlcash-conformance
+          path: ../lnurlcash-conformance
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
