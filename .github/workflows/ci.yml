@@ -19,15 +19,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # the conformance vectors are a file: dependency while both repos are
-      # unpublished, so package.json resolves them one level up. actions/checkout
-      # refuses any path outside the workspace, so land it inside and move it
-      # into place.
-      - uses: actions/checkout@v4
-        with:
-          repository: TheCryptoDonkey/lnurlcash-conformance
-          path: conformance
-      - run: mv conformance ../lnurlcash-conformance
       - run: npm install
       - run: npm run typecheck
       - run: npm test
