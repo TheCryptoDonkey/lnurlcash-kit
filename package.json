@@ -46,7 +46,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@noble/curves": "^2.3.0",
