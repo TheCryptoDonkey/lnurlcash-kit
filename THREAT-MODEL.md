@@ -56,7 +56,11 @@ safe to treat as "nothing happened".
 by a user or supplied by a service in its own response, must be https, or
 http to loopback or `.onion`. A `data:` URL carrying withdrawRequest JSON
 would otherwise mint a self-contained fake note that verifies against
-nothing.
+nothing. Redirects are followed by hand, each hop re-admitted against the
+same rule, so an https endpoint cannot pass a request - and the k1 a
+callback URL carries - off to cleartext or another scheme mid-chain. And
+every response body is read with a size cap, so one hostile answer cannot
+exhaust the caller's memory.
 
 **A service that inflates a note.** With offline verification configured, the
 signature commits to the amount. A service reporting more than it signed

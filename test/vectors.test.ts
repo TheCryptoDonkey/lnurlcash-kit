@@ -253,3 +253,16 @@ describe('bolt11 vectors', () => {
     })
   }
 })
+
+
+describe('fee parsing beyond the vectors', () => {
+  it('refuses fee digits past the safe-integer range', () => {
+    const huge = '9'.repeat(20)
+    expect(
+      parseMintFee(JSON.stringify([['text/plain', `Mint fees: ${huge},0`]]))
+    ).toBeNull()
+    expect(
+      parseMintFee(JSON.stringify([['text/plain', `Mint fees: 0,${huge}`]]))
+    ).toBeNull()
+  })
+})

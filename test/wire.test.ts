@@ -278,3 +278,106 @@ describe('payRequest vectors', () => {
     })
   }
 })
+
+
+describe('transport discipline', () => {
+  const K1 = 'a'.repeat(64)
+  const H = 'b'.repeat(64)
+  const CB = 'https://mint.example/w/cb'
+  const OK = JSON.stringify({status: 'OK'})
+
+  // First request 302s to `target`; anything reached afterwards answers OK.
+  const redirectFetch = (target: string, seen: string[]): typeof fetch =>
+    async input => {
+      seen.push(input.toString())
+      if (seen.length === 1) {
+        return new Response(null, {status: 302, headers: {location: target}})
+      }
+      return new Response(OK, {headers: {'content-type': 'application/json'}})
+    }
+
+  it('follows a redirect that stays on an allowed URL', async () => {
+    const seen: string[] = []
+    await rotateNoteWithHash(CB, K1, H, {
+      fetch: redirectFetch('https://mint2.example/w/cb', seen)
+    })
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toContain('mint2.example')
+  })
+
+  it('resolves a relative redirect against the URL that issued it', async () => {
+    const seen: string[] = []
+    await rotateNoteWithHash(CB, K1, H, {fetch: redirectFetch('/w/cb2', seen)})
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toBe('https://mint.example/w/cb2')
+  })
+
+  it('refuses to follow a redirect onto cleartext', async () => {
+    const seen: string[] = []
+    const err = await rotateNoteWithHash(CB, K1, H, {
+      fetch: redirectFetch('http://mint2.example/w/cb', seen)
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMintError)
+    expect(seen).toHaveLength(1)
+  })
+
+  it('refuses to follow a redirect to a non-http scheme', async () => {
+    const seen: string[] = []
+    const err = await rotateNoteWithHash(CB, K1, H, {
+      fetch: redirectFetch('data:application/json,{"status":"OK"}', seen)
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMintError)
+    expect(seen).toHaveLength(1)
+  })
+
+  it('gives up on a redirect loop', async () => {
+    const seen: string[] = []
+    const err = await rotateNoteWithHash(CB, K1, H, {
+      fetch: async input => {
+        seen.push(input.toString())
+        return new Response(null, {
+          status: 302,
+          headers: {location: 'https://mint.example/loop'}
+        })
+      }
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMintError)
+    expect(seen.length).toBeLessThanOrEqual(7)
+  })
+
+  it('refuses a body that declares itself oversized', async () => {
+    const err = await rotateNoteWithHash(CB, K1, H, {
+      fetch: async () =>
+        new Response(OK, {
+          headers: {'content-type': 'application/json', 'content-length': '99999999'}
+        })
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMintError)
+    expect(err.message).toContain('oversized')
+  })
+
+  it('refuses a body that streams past the cap', async () => {
+    const err = await rotateNoteWithHash(CB, K1, H, {
+      fetch: async () =>
+        new Response(' '.repeat(1_100_000), {
+          headers: {'content-type': 'application/json'}
+        })
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMintError)
+    expect(err.message).toContain('oversized')
+  })
+
+  it('rejects a non-integer maxWithdrawable', async () => {
+    await expect(
+      fetchNoteInfo(`https://mint.example/w?k1=${K1}`, {
+        fetch: jsonFetch({
+          tag: 'withdrawRequest',
+          callback: CB,
+          k1: K1,
+          minWithdrawable: 0,
+          maxWithdrawable: 1000.5
+        })
+      })
+    ).rejects.toBeInstanceOf(ProtocolError)
+  })
+})

@@ -25,7 +25,10 @@ export const parseMintFee = (metadata: string): MintFee | null => {
     if (!match) continue
     const baseFeeMsat = Number(match[1])
     const feePpm = Number(match[2])
-    if (!Number.isFinite(baseFeeMsat) || !Number.isFinite(feePpm)) continue
+    // Safe integers, not merely finite: the digits come from a SERVICE and
+    // are unbounded in length, and anything past 2^53 makes the fee maths
+    // below silently imprecise rather than merely large.
+    if (!Number.isSafeInteger(baseFeeMsat) || !Number.isSafeInteger(feePpm)) continue
     // A fee of 100% or more can never net anything. Refusing it here is
     // also what keeps grossUpForMintFee's search bounded, so a SERVICE
     // cannot stall a caller simply by advertising one.

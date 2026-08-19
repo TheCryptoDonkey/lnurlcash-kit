@@ -49,9 +49,14 @@ export class PendingNoteError extends ServiceRejectedError {
   }
 }
 
-// The SERVICE reports the k1 as unambiguously already burned. It is
-// authoritative here, so a holder may lock the note as spent without
-// asking anything further.
+// The SERVICE reports the k1 as already burned. At the informational GET
+// ("Note already spent.") that statement is unambiguous and authoritative,
+// so a holder may lock the note as spent without asking anything further.
+// At the mutating callback the picture is weaker: the atomic refusal string
+// ("Invalid or already spent k1.") covers an unknown or malformed k1 and an
+// output-id collision just as much as a genuinely spent input, and the
+// request itself burned nothing either way. Before locking a note on the
+// strength of a CALLBACK refusal, probe it with probeBurnedNote.
 export class NoteSpentError extends ServiceRejectedError {
   constructor(reason: string) {
     super(reason)

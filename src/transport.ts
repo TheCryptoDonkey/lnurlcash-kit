@@ -29,6 +29,95 @@ export const resolveOptions = (options: LnurlcashOptions = {}): ResolvedOptions 
   randomSecret: options.randomSecret ?? defaultRandomSecret
 })
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+// Followed by hand, never by fetch itself. Fetch's own redirect handling
+// would treat the first URL's admission check as covering the whole chain,
+// which it does not: nothing stops an https endpoint redirecting to http
+// cleartext on another host, and a k1-bearing callback URL would ride along
+// in the clear. Every hop is re-admitted against the same rule instead.
+// Bounded, so a redirect loop is an error rather than a hang.
+const MAX_REDIRECTS = 5
+
+// LNURL payloads are small - a payRequest with an inlined image is the large
+// end. A SERVICE may answer with a body of unlimited size, and reading it
+// without a cap lets one response exhaust the caller's memory.
+const MAX_BODY_BYTES = 1_048_576
+
+const fetchFollowingRedirects = async (
+  startUrl: string,
+  options: ResolvedOptions
+): Promise<Response> => {
+  let current = startUrl
+  for (let redirects = 0; ; redirects++) {
+    let res: Response
+    try {
+      res = await options.fetch(current, {
+        signal: AbortSignal.timeout(options.timeoutMs),
+        redirect: 'manual'
+      })
+    } catch (err) {
+      // Transport failures are ambiguous for a mutating request: the request
+      // may well have arrived, and only the answer was lost.
+      if ((err as Error).name === 'TimeoutError') {
+        throw new AmbiguousMintError(
+          'The service took too long to respond - its answer, if any, was lost.'
+        )
+      }
+      throw new AmbiguousMintError(
+        'Failed to reach the service - it may be offline, or may not allow cross-origin requests.'
+      )
+    }
+    const location = res.headers.get('location')
+    if (!REDIRECT_STATUSES.has(res.status) || !location) return res
+    if (redirects >= MAX_REDIRECTS) {
+      throw new AmbiguousMintError('The service redirected too many times.')
+    }
+    let next: string | null
+    try {
+      next = new URL(location, current).toString()
+    } catch {
+      next = null
+    }
+    // The first request was already sent deliberately; refusing to follow is
+    // a statement about the answer, not about whether anything happened.
+    if (!next || !isAllowedServiceUrl(next)) {
+      throw new AmbiguousMintError(
+        'The service tried to redirect somewhere this library will not fetch - the original request may already have been processed.'
+      )
+    }
+    current = next
+  }
+}
+
+const readBodyText = async (res: Response): Promise<string> => {
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    throw new AmbiguousMintError('The service returned an oversized response.')
+  }
+  if (!res.body) return ''
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const {done, value} = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {})
+      throw new AmbiguousMintError('The service returned an oversized response.')
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
 // The single request primitive. Every failure it raises is already
 // classified by whether the request could have been processed, which is
 // the distinction the rest of the library depends on.
@@ -46,26 +135,14 @@ export const lnurlFetch = async (
       'Refusing to fetch that URL - only https, or http to a loopback or .onion host, is allowed.'
     )
   }
-  let res: Response
+  const res = await fetchFollowingRedirects(url.toString(), options)
+  const text = await readBodyText(res)
+  let body: any
   try {
-    res = await options.fetch(url.toString(), {
-      signal: AbortSignal.timeout(options.timeoutMs)
-    })
-  } catch (err) {
-    // Transport failures are ambiguous for a mutating request: the request
-    // may well have arrived, and only the answer was lost.
-    if ((err as Error).name === 'TimeoutError') {
-      throw new AmbiguousMintError(
-        'The service took too long to respond - its answer, if any, was lost.'
-      )
-    }
-    throw new AmbiguousMintError(
-      'Failed to reach the service - it may be offline, or may not allow cross-origin requests.'
-    )
-  }
-  const body = await res.json().catch(() => {
+    body = JSON.parse(text)
+  } catch {
     throw new AmbiguousMintError('The service returned an unreadable response.')
-  })
+  }
   if (body?.status === 'ERROR') {
     // The reason is carried through EXACTLY as the SERVICE sent it, empty
     // string included. Substituting a friendly default here would be read

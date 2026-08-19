@@ -55,11 +55,11 @@ export const fetchNoteInfo = async (
     typeof body.callback !== 'string' ||
     typeof body.k1 !== 'string' ||
     typeof body.maxWithdrawable !== 'number' ||
-    !Number.isFinite(body.maxWithdrawable) ||
+    !Number.isSafeInteger(body.maxWithdrawable) ||
     body.maxWithdrawable < 0 ||
     (body.minWithdrawable !== undefined &&
       (typeof body.minWithdrawable !== 'number' ||
-        !Number.isFinite(body.minWithdrawable) ||
+        !Number.isSafeInteger(body.minWithdrawable) ||
         body.minWithdrawable < 0 ||
         body.minWithdrawable > body.maxWithdrawable))
   ) {
