@@ -4,6 +4,14 @@
   "description": "LNURLcash (LUD-25) bearer note client for TypeScript - mint, rotate, split, merge, melt, and verify offline",
   "author": "TheCryptoDonkey",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheCryptoDonkey/lnurlcash-kit.git"
+  },
+  "homepage": "https://github.com/TheCryptoDonkey/lnurlcash-kit#readme",
+  "bugs": {
+    "url": "https://github.com/TheCryptoDonkey/lnurlcash-kit/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
