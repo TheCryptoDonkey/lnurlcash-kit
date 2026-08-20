@@ -5,6 +5,11 @@ may carry breaking changes; pin an exact version.
 
 ## Unreleased
 
+- `fetchMintAddress` now populates `nodeCapacityMsat`. The wire field is
+  `nodeCapacity`, and the response was spread through unmapped, so the typed
+  field was always `undefined` - inherited from lnurl-wallet, where the same
+  bug hides the mint's channel capacity in the UI. `nodeNumChannels` and
+  `nodeNumPeers` were never affected: those names match the wire.
 - The conformance vectors now come from the published
   `lnurlcash-conformance` package rather than a git ref, so the suite runs
   against a released, attested set of vectors. Test-only; nothing consumers

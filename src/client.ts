@@ -118,6 +118,10 @@ export type MintAddressInfo = {
   nodeAlias?: string
   nodeUri?: string
   nodeColor?: string
+  // The wire field is `nodeCapacity`, denominated in msat like every other
+  // amount here. Carries the ...Msat suffix on this side because a caller
+  // reading a bare `capacity` off a Lightning node has no reason to assume
+  // millisatoshis - see the mapping in fetchMintAddress.
   nodeCapacityMsat?: number
   nodeNumChannels?: number
   nodeNumPeers?: number
@@ -141,8 +145,14 @@ export const fetchMintAddress = async (
   ) {
     throw new ProtocolError('Not a mint address response (unexpected shape).')
   }
-  const {mintPubkey, ...rest} = body
-  return {...rest, nodePubkey: mintPubkey} as MintAddressInfo
+  const {mintPubkey, nodeCapacity, ...rest} = body
+  return {
+    ...rest,
+    nodePubkey: mintPubkey,
+    // Renamed fields have to be mapped, not spread: the spread carries the
+    // wire name through, so the typed one would read undefined forever.
+    nodeCapacityMsat: typeof nodeCapacity === 'number' ? nodeCapacity : undefined
+  } as MintAddressInfo
 }
 
 // ---- the mutating callback ----

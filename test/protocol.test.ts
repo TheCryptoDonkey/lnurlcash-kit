@@ -374,6 +374,47 @@ describe('minting', () => {
     expect(address.payLink).toBe(`${m.url}/.well-known/lnurlp/mint`)
   })
 
+  it('reads the node stats a mint address advertises', async () => {
+    const m = await mint()
+    // lnurl-mint answers with nodeCapacity (msat), which this side exposes
+    // as nodeCapacityMsat - a rename that only happens if it is mapped
+    const spyFetch: typeof fetch = async (input, init) => {
+      const res = await fetch(input as string, init)
+      const body = await res.json()
+      return new Response(
+        JSON.stringify({
+          ...body,
+          nodeCapacity: 210_000_000,
+          nodeNumChannels: 12,
+          nodeNumPeers: 9
+        }),
+        {headers: {'content-type': 'application/json'}}
+      )
+    }
+    const address = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
+      fetch: spyFetch
+    })
+    expect(address.nodeCapacityMsat).toBe(210_000_000)
+    expect(address.nodeNumChannels).toBe(12)
+    expect(address.nodeNumPeers).toBe(9)
+  })
+
+  it('leaves the node stats undefined when a mint address omits them', async () => {
+    const m = await mint()
+    const spyFetch: typeof fetch = async (input, init) => {
+      const res = await fetch(input as string, init)
+      const {nodeCapacity, nodeNumChannels, nodeNumPeers, ...body} = await res.json()
+      return new Response(JSON.stringify(body), {
+        headers: {'content-type': 'application/json'}
+      })
+    }
+    const address = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
+      fetch: spyFetch
+    })
+    expect(address.nodeCapacityMsat).toBeUndefined()
+    expect(address.nodeNumChannels).toBeUndefined()
+  })
+
   it('reports a sunsetting mint\'s refusal as definitive', async () => {
     const m = await mint({sunset: true})
     const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
