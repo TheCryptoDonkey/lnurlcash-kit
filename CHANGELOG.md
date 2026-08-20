@@ -3,6 +3,13 @@
 Semantic versioning. While the LUD-25 draft is unmerged, `0.x` minor bumps
 may carry breaking changes; pin an exact version.
 
+## Unreleased
+
+- The conformance vectors now come from the published
+  `lnurlcash-conformance` package rather than a git ref, so the suite runs
+  against a released, attested set of vectors. Test-only; nothing consumers
+  install changes.
+
 ## 0.1.0 - 2026-08-20
 
 First release. The protocol layer of
