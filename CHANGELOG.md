@@ -3,7 +3,7 @@
 Semantic versioning. While the LUD-25 draft is unmerged, `0.x` minor bumps
 may carry breaking changes; pin an exact version.
 
-## Unreleased
+## 0.1.1 - 2026-08-20
 
 - `fetchMintAddress` now populates `nodeCapacityMsat`. The wire field is
   `nodeCapacity`, and the response was spread through unmapped, so the typed
