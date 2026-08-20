@@ -372,6 +372,13 @@ describe('minting', () => {
     const address = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`)
     expect(address.nodePubkey).toBe(m.state.pubkey)
     expect(address.payLink).toBe(`${m.url}/.well-known/lnurlp/mint`)
+    // Against the real mock, unstubbed: the conformance mint advertises
+    // nodeCapacity on the wire, so the rename has to survive a round trip
+    // nobody here controls. The spied tests below prove the mapping in
+    // isolation; this one proves it against what a mint actually sends.
+    expect(address.nodeCapacityMsat).toBe(500_000_000)
+    expect(address.nodeNumChannels).toBe(4)
+    expect(address.nodeNumPeers).toBe(6)
   })
 
   it('reads the node stats a mint address advertises', async () => {
