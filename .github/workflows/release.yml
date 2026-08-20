@@ -1,0 +1,40 @@
+name: release
+
+# Hardened npm release via forgesworn/anvil: OIDC trusted publishing (no
+# NPM_TOKEN), SLSA provenance, secret scan on the pack set, exports check,
+# and a two-runner reproducible-build attestation.
+#
+# Two triggers land on this one file, which is the OIDC entry-point npm's
+# trusted publisher matches against:
+#   release: published  - you create the GitHub Release, this publishes it
+#   workflow_dispatch   - publish a specific tag by hand
+#
+# npm matches the trusted publisher against THIS caller workflow, not
+# against forgesworn/anvil - configure it on npmjs.com as repo
+# TheCryptoDonkey/lnurlcash-kit, workflow release.yml. The very first
+# publish of a new package name cannot use OIDC at all (npm/cli#8544); it
+# is seeded by hand once, and trusted publishing takes over from there.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.1.0)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    uses: forgesworn/anvil/.github/workflows/release.yml@d4294e622932d93957d73e5b1af0267382b6af04 # v0.10.1
+    with:
+      tag: ${{ inputs.tag || '' }}
+      # ci.yml actions are SHA-pinned, so the pin audit runs strict.
+      strict-action-pins: true
+      lifecycle-scripts-policy: strict
+      reproducibility-mode: strict
