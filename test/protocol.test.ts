@@ -11,26 +11,27 @@ import {hexToBytes} from '@noble/hashes/utils.js'
 import {
   AmbiguousMintError,
   AmbiguousMutationError,
-  NoteSpentError,
-  NoteUnknownError,
-  PendingNoteError,
-  ProtocolError,
-  RequestRefusedError,
-  ServiceRejectedError,
   buildNoteUrl,
   fetchInvoiceVerification,
   fetchMintAddress,
   fetchNoteInfo,
   fetchPayRequest,
+  fromLud17,
   hashK1,
   meltNote,
   mergeNotes,
+  NoteSpentError,
+  NoteUnknownError,
+  PendingNoteError,
   probeBurnedNote,
+  ProtocolError,
   requestInvoice,
+  RequestRefusedError,
   rotateNote,
+  ServiceRejectedError,
   settleNote,
   splitNote,
-  verifyNoteSignature
+  verifyNoteSignature,
 } from '../src/index.js'
 
 type Mint = Awaited<ReturnType<typeof createMockMint>>
@@ -316,7 +317,9 @@ describe('minting', () => {
   it('mints a note from a paid invoice and rotates it immediately', async () => {
     const m = await mint()
     const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
-    expect(pay.withdrawLink).toBe(`lnurlw://127.0.0.1:${m.port}/w`)
+    // Either legal spelling (plain URL as lnurl-mint, lnurlw:// per LUD-17)
+    // resolves to the same fetchable endpoint; that is what matters here.
+    expect(fromLud17(pay.withdrawLink!)).toBe(`http://127.0.0.1:${m.port}/w`)
 
     const invoice = await requestInvoice(pay.callback, 21000)
     expect(invoice.disposable).toBe(false)
