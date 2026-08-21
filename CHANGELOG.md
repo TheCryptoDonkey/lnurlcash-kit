@@ -110,6 +110,41 @@ may carry breaking changes; pin an exact version.
   per signature layout, so a long key history costs a string comparison
   each, not a recovery each.
 
+### Accepting a note as payment
+
+- `settleNoteForValue(noteUrl, {mints, minMsat, requireSignature}, opts)`
+  in a new `settle.ts`, returning `{note, newUrl}`. It is the decision
+  sequence every server accepting a bearer note performs, written once:
+  parse the input; check the note's mint is one the server accepts, before
+  any round trip, so an unaccepted mint is never contacted; fetch the
+  authoritative value and the mint's signing key; verify the signature over
+  that value where the server demands one; compare against the price;
+  rotate.
+- The rotate is the settlement, not bookkeeping after it. It burns the
+  secret the payer handed over and mints a replacement only the server
+  knows, in one atomic request at the mint, so it transfers ownership and
+  rejects a replay in the same call: a second presentation of the same note
+  finds it spent. A server that checks a note's value and grants access
+  without rotating has verified a photograph of a banknote.
+- New `InsufficientValueError`, extending `ServiceRejectedError` and
+  carrying `amountMsat` and `minMsat`, so a server can say how short a note
+  was rather than "declined". An unaccepted mint or a signature that will
+  not verify raises `ServiceRejectedError`; a spent note passes
+  `NoteSpentError` through; a note with a melt in flight raises
+  `PendingNoteError`, which is worth retrying rather than refusing. Nothing
+  is burned by any refusal, so a rejected note is still the payer's, intact.
+- `AmbiguousMutationError` from the rotate reaches the caller unchanged,
+  carrying the fresh secret. If that request landed, the secret is the money
+  and it belongs to the server: persist it before anything else.
+- An empty `mints` list accepts nothing. A note is a claim on one specific
+  operator, and "any mint" is not a policy a server should be able to hold
+  by accident.
+- The value compared against the price is always the one the mint states.
+  A note URL's own `amount` is a claim by whoever encoded it, and a
+  signature, where one is required, is checked over the mint's figure, so an
+  inflated URL fails rather than passing on a signature issued for the true
+  amount.
+
 ## 0.1.2 - 2026-08-21
 
 - `mintFeeBand` and `withinMintFeeBand`. LUD-25 states the mint fee as

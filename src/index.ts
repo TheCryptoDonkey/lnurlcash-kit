@@ -65,6 +65,12 @@ export {
 } from './secrets.js'
 
 export {
+  settleNoteForValue,
+  type SettleForValueOptions,
+  type SettledForValue
+} from './settle.js'
+
+export {
   restoreNotes,
   type RestoredNote,
   type RestoreResult,
@@ -105,6 +111,7 @@ export {
   PendingNoteError,
   NoteSpentError,
   NoteUnknownError,
+  InsufficientValueError,
   AmbiguousMintError,
   AmbiguousMutationError,
   classifyNoteError
@@ -145,6 +152,7 @@ export {
 import type {LnurlcashOptions} from './transport.js'
 import * as client from './client.js'
 import {restoreNotes, type RestoreOptions} from './restore.js'
+import {settleNoteForValue, type SettleForValueOptions} from './settle.js'
 
 // Every request function takes options as its last argument, so they can be
 // used directly. createClient binds one set of options once, for callers
@@ -188,7 +196,9 @@ export const createClient = (options: LnurlcashOptions = {}) => ({
     root: Uint8Array,
     host: string,
     restoreOptions: RestoreOptions = {}
-  ) => restoreNotes(baseUrl, root, host, restoreOptions, options)
+  ) => restoreNotes(baseUrl, root, host, restoreOptions, options),
+  settleNoteForValue: (noteUrl: string, terms: SettleForValueOptions) =>
+    settleNoteForValue(noteUrl, terms, options)
 })
 
 export type LnurlcashClient = ReturnType<typeof createClient>

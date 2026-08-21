@@ -24,6 +24,8 @@ splitNote(callback, k1s, amountMsat, opts?) -> {k1, change, signature?, changeSi
 mergeNotes(callback, k1s, opts?) -> {k1, signature?}
 meltNote(callback, k1, bolt11, opts?) -> {pr?, verify?}
 settleNote(baseUrl, k1, expectedMsat, sig?, opts?) -> {k1, amountMsat, signature?, callback}
+settleNoteForValue(noteUrl, {mints, minMsat, requireSignature?}, opts?)
+  -> {note, newUrl}   server side: accept a note as payment, rotate to settle
 probeBurnedNote(url, opts?) -> 'live' | 'gone' | 'unknown'
 verifyNoteSignature(k1, amountMsat, sigHex, pubkeyHex | pubkeyHex[]) -> boolean
 verifyNoteSignatureAgainst(k1, amountMsat, sigHex, keys) -> {valid, pubkey}
@@ -55,10 +57,14 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
    preimage, and LUD-21 verify exposes it to anyone who saw the invoice.
 7. Never log note URLs. The secret is in the query string.
 8. Never branch on error message text. Branch on the error class.
-9. A mint may rotate its signing key. Verify against its current key plus the
-   previousPubkeys it publishes; a note that verifies only against a retired
-   key should be rotated to be re-signed. An empty key list is a rejection.
-10. With derived secrets, persist the per-host counter in the SAME write
+9. Accepting a note as payment MUST end in a rotate. Checking its value and
+   granting access without rotating leaves the payer able to spend it again;
+   the rotate is both the ownership transfer and the replay check.
+10. A mint may rotate its signing key. Verify against its current key plus
+    the previousPubkeys it publishes; a note that verifies only against a
+    retired key should be rotated to be re-signed. An empty key list is a
+    rejection.
+11. With derived secrets, persist the per-host counter in the SAME write
     that stages the new records and BEFORE the hash goes on the wire. A
     split consumes two indices, a rotate one; read source.index() for the
     next unused one. Bumping late re-derives a secret the mint has already

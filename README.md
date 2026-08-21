@@ -250,6 +250,54 @@ gets the signature in the same call.
 The seed is bearer material for every note the wallet will ever hold. Store
 it the way you store the notes, and never log it.
 
+## Taking a note as payment
+
+A server that accepts bearer notes for something makes the same decisions
+every time, in this order, and `settleNoteForValue` is that order written
+once:
+
+```ts
+import {settleNoteForValue, InsufficientValueError} from 'lnurlcash-kit'
+
+try {
+  const {note, newUrl} = await settleNoteForValue(offered, {
+    mints: ['mint.example'],   // hosts this server accepts. An empty list accepts nothing.
+    minMsat: 21_000,           // the price
+    requireSignature: false    // demand offline proof of issuance first
+  })
+  grantAccess()                // note.k1 is yours now; newUrl is a note to store or melt
+} catch (err) {
+  if (err instanceof InsufficientValueError) refuse(err.amountMsat, err.minMsat)
+  else refuse()
+}
+```
+
+1. the input parses as a note at all
+2. its mint is one this server accepts (checked before any round trip, so an
+   unaccepted mint is never contacted)
+3. an informational GET for the **authoritative** value and the mint's key
+4. the signature, where the server demands one, over the value the mint
+   stated rather than the one the URL claims
+5. that value covers the price
+6. **rotate**
+
+Step 6 is the settlement, not bookkeeping after it. Rotating burns the
+secret the payer handed over and mints a replacement only this server knows,
+in one atomic request: it transfers ownership and rejects a replay in the
+same call, because a second presentation of the same note finds it spent. A
+server that checks a note's value and grants access without rotating has
+verified a photograph of a banknote.
+
+Refusals are typed, and nothing is burned by any of them: `ServiceRejectedError`
+for an unaccepted mint or a signature that will not verify,
+`InsufficientValueError` (carrying both amounts) for a note worth too
+little, `NoteSpentError` for one already spent or presented twice,
+`PendingNoteError` for one with a melt in flight, which is worth retrying
+rather than refusing outright. `AmbiguousMutationError` from the rotate is
+the case to handle with care: persist `err.newSecrets` before anything else,
+because if the request landed then that secret is the money and it is now
+this server's.
+
 ## Scope
 
 This library speaks the protocol. It does not store notes, hold keys, manage
