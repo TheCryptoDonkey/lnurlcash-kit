@@ -65,6 +65,17 @@ export {
 } from './secrets.js'
 
 export {
+  PAYMENT_REQUEST_PREFIX,
+  encodePaymentRequest,
+  decodePaymentRequest,
+  isPaymentRequest,
+  paymentRequestAmountMsat,
+  type PaymentRequest,
+  type PaymentRequestMethodDetails,
+  type DecodeOptions
+} from './request.js'
+
+export {
   settleNoteForValue,
   type SettleForValueOptions,
   type SettledForValue

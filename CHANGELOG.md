@@ -145,6 +145,66 @@ may carry breaking changes; pin an exact version.
   inflated URL fails rather than passing on a signature issued for the true
   amount.
 
+### Payment requests
+
+- `encodePaymentRequest(request)`, `decodePaymentRequest(string, {now})`,
+  `isPaymentRequest(string)` and `paymentRequestAmountMsat(request)` in a
+  new `request.ts`, with the `PaymentRequest` type and the
+  `PAYMENT_REQUEST_PREFIX` constant.
+- A request names an amount, the mints the payee accepts and where to
+  deliver, so a payer's wallet can split a note and send it straight across
+  instead of doing a mint-and-zap round trip through the mint's node for
+  something neither party needed a node for:
+
+  ```json
+  {"v": 1, "id": "0123456789abcdef", "amount": "500", "currency": "sat",
+   "methodDetails": {"mints": ["mint.example"]},
+   "to": "npub1...", "memo": "lunch", "expires": 1756000000}
+  ```
+
+  `id` is 16 lowercase hex characters, `amount` is whole sats as a decimal
+  string with no leading zeros, `to` is a Nostr npub or a Lightning Address
+  and is absent on a charge request served over HTTP, and `expires` is unix
+  seconds. `methodDetails` also accepts an optional `mintPubkeys`.
+- Encoded as `lnurlcashreq1` followed by base64url (unpadded) of the
+  request serialised as RFC 8785 JCS-canonical JSON: keys sorted by UTF-16
+  code unit at every level, no whitespace, integers only. Canonical because
+  a request is a thing people copy, quote back and match against a record of
+  what they asked for, so two encodings of the same request must be the same
+  string. This is NUT-18's `creqA` idiom with our own prefix, and it stays
+  short enough for a single static QR.
+- The object is the same charge request an HTTP 402 lnurlcash rail serves,
+  plus the transport fields a wallet-to-wallet send needs, so one encoder
+  covers both.
+- Validation is strict in both directions, an unrecognised field included:
+  quietly paying a request one did not fully understand is how a payer pays
+  the wrong person. Every refusal is a `ProtocolError`.
+- `amount` is in sat, which is the one exception to this library's
+  msat-everywhere rule, because the field is shared with the 402 rail and
+  the Cashu payment method and both count in whole units.
+  `paymentRequestAmountMsat` converts exactly, so nothing has to multiply by
+  hand.
+- An expired request does not decode, since paying one is always wrong. At
+  the expiry counts as expired, not merely past it, so a payer whose clock
+  is a second behind the payee's does not send a note against a request the
+  payee has already written off. `isPaymentRequest` still returns true for
+  it, so a scanner routes it to the pay screen and the holder is told it
+  lapsed rather than that their input was gibberish, and
+  `decodePaymentRequest(input, {now: 0})` returns it for display.
+- `to` is checked rather than shape-matched: an npub must survive its bech32
+  checksum. A request naming a destination nobody can route to is a request
+  nobody can pay, and a mistyped npub passes any regex.
+- **`lnurlcashreq1` means the schema above and nothing else.** An earlier
+  HTTP 402 rail emitted a shorter object under the same prefix -
+  `{"a": 21, "m": ["mint.example"], "u": "sat"}`, with the amount as a
+  number, no version and no id - and two schemas under one prefix cannot
+  both be right. This is the one the conformance vectors pin, so it is the
+  definition. The decoder reads the short form anyway, because returning
+  nothing for a string it can plainly understand helps no one, and gives it
+  a deterministic id derived from its own canonical bytes so the same
+  challenge always reads back as the same request. Nothing in this library
+  ever emits the short form.
+
 ## 0.1.2 - 2026-08-21
 
 - `mintFeeBand` and `withinMintFeeBand`. LUD-25 states the mint fee as
