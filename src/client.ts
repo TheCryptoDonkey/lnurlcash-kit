@@ -103,6 +103,14 @@ export const probeBurnedNote = async (
 
 // ---- the mint address (experimental) ----
 
+export type MintContact = {
+  // A Nostr npub, an email address, a URL: however the operator wants to be
+  // reached. All optional, and a SERVICE that publishes none is normal.
+  nostr?: string
+  email?: string
+  url?: string
+}
+
 export type MintAddressInfo = {
   tag: 'withdrawRequest'
   callback: string
@@ -125,7 +133,66 @@ export type MintAddressInfo = {
   nodeCapacityMsat?: number
   nodeNumChannels?: number
   nodeNumPeers?: number
+
+  // ---- who runs this mint (all optional) ----
+  //
+  // The human layer. A note is a bearer claim on one specific operator, and
+  // a holder deciding whether to keep sats there wants to know who that is,
+  // how to reach them, and what they have said lately. Absent means the
+  // SERVICE published nothing, never that the answer is empty.
+  name?: string
+  description?: string
+  contact?: MintContact
+  tosUrl?: string
+  // A message of the day: how an operator talks to holders between releases.
+  // Maintenance windows, a fee change, a sunset date. Worth surfacing when
+  // it changes rather than burying on a settings screen.
+  motd?: string
+  // The structured twin of the fee prose in a payRequest's metadata. Same
+  // shape parseMintFee returns, so it feeds applyMintFee and mintFeeBand
+  // directly. The metadata form remains the one a WALLET must handle: this
+  // endpoint is experimental and optional, and the payRequest is not.
+  fees?: MintFee
+  // The SERVICE's own software version, for a holder reporting a bug.
+  version?: string
+  // Signing keys this SERVICE has retired. A note signed under one of them
+  // is still genuine, and still verifies: rotating a signing key would
+  // otherwise invalidate every outstanding signature at once. Pass this
+  // list alongside the current key to verifyNoteSignature.
+  previousPubkeys?: string[]
 }
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+
+const asNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const asContact = (value: unknown): MintContact | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const contact: MintContact = {
+    nostr: asString(raw.nostr),
+    email: asString(raw.email),
+    url: asString(raw.url)
+  }
+  const any = contact.nostr ?? contact.email ?? contact.url
+  return any === undefined ? undefined : contact
+}
+
+const asFees = (value: unknown): MintFee | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const baseFeeMsat = asNumber(raw.baseFeeMsat)
+  const feePpm = asNumber(raw.feePpm)
+  // A SERVICE that states one component and omits the other means zero for
+  // the one it omitted, the same reading parseMintFee gives the prose form.
+  if (baseFeeMsat === undefined && feePpm === undefined) return undefined
+  return {baseFeeMsat: baseFeeMsat ?? 0, feePpm: feePpm ?? 0}
+}
+
+const asPubkeyList = (value: unknown): string[] | undefined =>
+  Array.isArray(value) ? value.filter(item => typeof item === 'string') : undefined
 
 // Best-effort discovery only. This endpoint is experimental and carries no
 // LUD number, so most SERVICEs - including ones this library otherwise
@@ -145,14 +212,40 @@ export const fetchMintAddress = async (
   ) {
     throw new ProtocolError('Not a mint address response (unexpected shape).')
   }
-  const {mintPubkey, nodeCapacity, ...rest} = body
+  // Mapped field by field rather than spread through. A spread carries wire
+  // names into the typed object unchecked, which is how nodeCapacityMsat
+  // came to read undefined forever while the value sat there under its wire
+  // name; it also means whatever a SERVICE decides to add lands on the
+  // object with no type behind it. An unrecognised field is dropped here
+  // instead, and the version of this library that understands it will map
+  // it deliberately.
   return {
-    ...rest,
-    nodePubkey: mintPubkey,
-    // Renamed fields have to be mapped, not spread: the spread carries the
-    // wire name through, so the typed one would read undefined forever.
-    nodeCapacityMsat: typeof nodeCapacity === 'number' ? nodeCapacity : undefined
-  } as MintAddressInfo
+    tag: 'withdrawRequest',
+    callback: body.callback,
+    minWithdrawable: asNumber(body.minWithdrawable) ?? 0,
+    maxWithdrawable: body.maxWithdrawable,
+    defaultDescription: asString(body.defaultDescription),
+    nodePubkey: asString(body.mintPubkey),
+    payLink: body.payLink,
+    nodeAlias: asString(body.nodeAlias),
+    nodeUri: asString(body.nodeUri),
+    nodeColor: asString(body.nodeColor),
+    // `nodeCapacity` is the wire name the reference mint, the mock and
+    // every implementation that copied them use. One live mint emits
+    // `nodeCapacityMsat` instead, so both are accepted and the bare name
+    // wins where a SERVICE sends both.
+    nodeCapacityMsat: asNumber(body.nodeCapacity) ?? asNumber(body.nodeCapacityMsat),
+    nodeNumChannels: asNumber(body.nodeNumChannels),
+    nodeNumPeers: asNumber(body.nodeNumPeers),
+    name: asString(body.name),
+    description: asString(body.description),
+    contact: asContact(body.contact),
+    tosUrl: asString(body.tosUrl),
+    motd: asString(body.motd),
+    fees: asFees(body.fees),
+    version: asString(body.version),
+    previousPubkeys: asPubkeyList(body.previousPubkeys)
+  }
 }
 
 // ---- the mutating callback ----

@@ -25,7 +25,10 @@ mergeNotes(callback, k1s, opts?) -> {k1, signature?}
 meltNote(callback, k1, bolt11, opts?) -> {pr?, verify?}
 settleNote(baseUrl, k1, expectedMsat, sig?, opts?) -> {k1, amountMsat, signature?, callback}
 probeBurnedNote(url, opts?) -> 'live' | 'gone' | 'unknown'
-verifyNoteSignature(k1, amountMsat, sigHex, mintPubkeyHex) -> boolean
+verifyNoteSignature(k1, amountMsat, sigHex, pubkeyHex | pubkeyHex[]) -> boolean
+verifyNoteSignatureAgainst(k1, amountMsat, sigHex, keys) -> {valid, pubkey}
+fetchMintAddress(url, opts?) -> {nodePubkey?, payLink, name?, motd?, contact?,
+  tosUrl?, fees?, version?, previousPubkeys?, node*?}  experimental, often absent
 deriveNoteRoot(seedBytes) -> Uint8Array    HMAC-SHA256("lnurlcash-note-v1", seed)
 deriveNoteSecret(root, host, index) -> k1  HMAC-SHA256(root, host + ":" + index)
 derivedSecretSource(root, host, start) -> RandomSecret & {index()}
@@ -52,10 +55,14 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
    preimage, and LUD-21 verify exposes it to anyone who saw the invoice.
 7. Never log note URLs. The secret is in the query string.
 8. Never branch on error message text. Branch on the error class.
-9. With derived secrets, persist the per-host counter in the SAME write that
-   stages the new records and BEFORE the hash goes on the wire. A split
-   consumes two indices, a rotate one; read source.index() for the next
-   unused one. Bumping late re-derives a secret the mint has already seen.
+9. A mint may rotate its signing key. Verify against its current key plus the
+   previousPubkeys it publishes; a note that verifies only against a retired
+   key should be rotated to be re-signed. An empty key list is a rejection.
+10. With derived secrets, persist the per-host counter in the SAME write
+    that stages the new records and BEFORE the hash goes on the wire. A
+    split consumes two indices, a rotate one; read source.index() for the
+    next unused one. Bumping late re-derives a secret the mint has already
+    seen.
 
 ## Error classes
 

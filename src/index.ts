@@ -73,8 +73,10 @@ export {
 
 export {
   verifyNoteSignature,
+  verifyNoteSignatureAgainst,
   noteSignatureMessage,
-  noteSignatureDigest
+  noteSignatureDigest,
+  type SignatureCheck
 } from './signature.js'
 
 export {
@@ -127,6 +129,7 @@ export {
   fetchInvoiceVerification,
   type WithdrawRequestInfo,
   type MintAddressInfo,
+  type MintContact,
   type WithdrawSuccessResponse,
   type MeltResult,
   type HashedMutationResult,

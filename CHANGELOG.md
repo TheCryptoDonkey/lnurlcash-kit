@@ -76,6 +76,40 @@ may carry breaking changes; pin an exact version.
   re-parse. `PendingNoteError` extends `ServiceRejectedError`, so anything
   catching the parent is unaffected.
 
+### Mint info, and verifying against a key history
+
+- `MintAddressInfo` gains the operator fields a mint may publish on the
+  experimental discovery endpoint: `name`, `description`, `contact`
+  (`{nostr?, email?, url?}`), `tosUrl`, `motd`, `fees` (`{baseFeeMsat,
+  feePpm}`, the same shape `parseMintFee` returns, so it feeds
+  `applyMintFee` and `mintFeeBand` directly), `version` and
+  `previousPubkeys`. All optional, all absent on most mints, and none of
+  them is needed to spend a note.
+- `fetchMintAddress` now maps the response field by field instead of
+  spreading it through. The spread is what hid `nodeCapacity` under its
+  wire name until 0.1.1, and it also put whatever a mint decided to send on
+  a typed object with no type behind it. An unrecognised wire field is now
+  dropped rather than carried, so a caller reading one off the object with
+  a cast will find it undefined; the version of this library that
+  understands that field will map it deliberately.
+- `nodeCapacityMsat` is now populated from either spelling. The bare
+  `nodeCapacity` is what the reference mint, the mock and everything that
+  copied them emit, and it wins where a mint sends both; one live mint
+  emits `nodeCapacityMsat` instead, which previously survived only by
+  riding the spread.
+- `verifyNoteSignature(k1, amountMsat, sig, keys)` accepts a single pubkey
+  or an array, and is true if any of them signed. New
+  `verifyNoteSignatureAgainst(...)` returns `{valid, pubkey}` so a caller
+  learns WHICH key signed. An empty array is a rejection, never a pass.
+- Why: a mint that rotates its signing key would otherwise invalidate every
+  outstanding signature at once, and a wallet holding only the new key would
+  read every note it already had as forged. The mint publishes its retired
+  keys as `previousPubkeys`, the wallet verifies against the current key and
+  that history together, and a note that verifies only against a retired key
+  is one to rotate so the mint re-signs it. Only one recovery is performed
+  per signature layout, so a long key history costs a string comparison
+  each, not a recovery each.
+
 ## 0.1.2 - 2026-08-21
 
 - `mintFeeBand` and `withinMintFeeBand`. LUD-25 states the mint fee as

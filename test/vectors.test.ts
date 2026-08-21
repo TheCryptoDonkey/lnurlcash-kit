@@ -35,6 +35,7 @@ import {
   sameInvoice,
   toBech32Lnurl,
   verifyNoteSignature,
+  verifyNoteSignatureAgainst,
   withNewK1,
   withoutK1
 } from '../src/index.js'
@@ -80,6 +81,63 @@ describe('signature vectors', () => {
       expect(bytesToHex(noteSignatureDigest(c.k1, c.amountMsat))).toBe(c.digest)
     })
   }
+
+  // A SERVICE that rotates its signing key publishes the retired ones as
+  // `previousPubkeys`. Notes signed under those keys are still genuine, so
+  // verification takes the current key and the history together.
+  describe('against a key history', () => {
+    const valid = vectors.cases.find((c: any) => c.valid)
+    const rotated = `02${'cd'.repeat(32)}`
+
+    it('accepts a note signed under any key in the list', () => {
+      expect(
+        verifyNoteSignature(valid.k1, valid.amountMsat, valid.signature, [
+          rotated,
+          valid.mintPubkey
+        ])
+      ).toBe(true)
+    })
+
+    it('reports which key signed', () => {
+      expect(
+        verifyNoteSignatureAgainst(valid.k1, valid.amountMsat, valid.signature, [
+          rotated,
+          valid.mintPubkey
+        ])
+      ).toEqual({valid: true, pubkey: valid.mintPubkey.toLowerCase()})
+    })
+
+    it('rejects when no key in the list signed it', () => {
+      expect(
+        verifyNoteSignature(valid.k1, valid.amountMsat, valid.signature, [
+          rotated,
+          `03${'ef'.repeat(32)}`
+        ])
+      ).toBe(false)
+      expect(
+        verifyNoteSignatureAgainst(valid.k1, valid.amountMsat, valid.signature, [
+          rotated
+        ])
+      ).toEqual({valid: false, pubkey: null})
+    })
+
+    it('rejects an empty list rather than reading it as no objection', () => {
+      expect(
+        verifyNoteSignature(valid.k1, valid.amountMsat, valid.signature, [])
+      ).toBe(false)
+    })
+
+    it('takes a single key exactly as before', () => {
+      expect(
+        verifyNoteSignatureAgainst(
+          valid.k1,
+          valid.amountMsat,
+          valid.signature,
+          valid.mintPubkey
+        )
+      ).toEqual({valid: true, pubkey: valid.mintPubkey.toLowerCase()})
+    })
+  })
 
   it('rejects a signature from the right key over the wrong note', () => {
     const valid = vectors.cases.find((c: any) => c.valid)
