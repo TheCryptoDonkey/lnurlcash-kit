@@ -12,6 +12,9 @@ import {
   AmbiguousMintError,
   AmbiguousMutationError,
   buildNoteUrl,
+  deriveNoteRoot,
+  deriveNoteSecret,
+  derivedSecretSource,
   fetchInvoiceVerification,
   fetchMintAddress,
   fetchNoteInfo,
@@ -27,6 +30,7 @@ import {
   ProtocolError,
   requestInvoice,
   RequestRefusedError,
+  restoreNotes,
   rotateNote,
   ServiceRejectedError,
   settleNote,
@@ -543,5 +547,139 @@ describe('a service that lies about value', () => {
     // does not verify - an offline holder can catch this without asking
     expect(verifyNoteSignature(k1, info.maxWithdrawable, signature!, m.state.pubkey)).toBe(false)
     expect(verifyNoteSignature(k1, 21000, signature!, m.state.pubkey)).toBe(true)
+  })
+})
+
+describe('restore from a seed', () => {
+  // any 32 bytes will do as a seed here; the derivation's own known answers
+  // live in derivation.test.ts
+  const root = deriveNoteRoot(hexToBytes('7e'.repeat(32)))
+
+  it('finds every derived note and reports the next free index', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    for (const index of [0, 1, 2]) {
+      m.state.creditNote(deriveNoteSecret(root, host, index), 21000 * (index + 1))
+    }
+
+    const result = await restoreNotes(`${m.url}/w`, root, host)
+    expect(result.found.map(n => n.index)).toEqual([0, 1, 2])
+    expect(result.found.map(n => n.amountMsat)).toEqual([21000, 42000, 63000])
+    expect(result.found.every(n => n.state === 'live')).toBe(true)
+    expect(result.next).toBe(3)
+  })
+
+  it('finds nothing at a mint the seed never minted at', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    expect(await restoreNotes(`${m.url}/w`, root, host)).toEqual({
+      found: [],
+      next: 0
+    })
+  })
+
+  it('walks over a gap left by an index that was never spent', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    // index 1 was drawn and the wallet died before the wire call - the
+    // counter moved, the mint never heard of it
+    m.state.creditNote(deriveNoteSecret(root, host, 0), 1000)
+    m.state.creditNote(deriveNoteSecret(root, host, 5), 2000)
+
+    const result = await restoreNotes(`${m.url}/w`, root, host)
+    expect(result.found.map(n => n.index)).toEqual([0, 5])
+    expect(result.next).toBe(6)
+  })
+
+  it('stops after `gap` consecutive unknown indices', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    m.state.creditNote(deriveNoteSecret(root, host, 0), 1000)
+    m.state.creditNote(deriveNoteSecret(root, host, 5), 2000)
+
+    // a gap of three never reaches index 5
+    const result = await restoreNotes(`${m.url}/w`, root, host, {gap: 3})
+    expect(result.found.map(n => n.index)).toEqual([0])
+    expect(result.next).toBe(1)
+  })
+
+  it('counts a spent index as used, and does not report it as a note', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    const spent = deriveNoteSecret(root, host, 0)
+    m.state.creditNote(spent, 21000)
+    const info = await fetchNoteInfo(noteUrl(m, spent))
+    await rotateNote(info.callback, spent)
+
+    const result = await restoreNotes(`${m.url}/w`, root, host)
+    expect(result.found).toEqual([])
+    // re-deriving index 0 would mint a note the service already burned
+    expect(result.next).toBe(1)
+  })
+
+  it('resumes from a start index without re-walking what came before', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    m.state.creditNote(deriveNoteSecret(root, host, 0), 1000)
+    m.state.creditNote(deriveNoteSecret(root, host, 7), 2000)
+
+    const result = await restoreNotes(`${m.url}/w`, root, host, {start: 7})
+    expect(result.found.map(n => n.index)).toEqual([7])
+    expect(result.next).toBe(8)
+  })
+
+  it('records a note the service reports as pending, with no amount', async () => {
+    const host = 'mint.example'
+    const k1 = deriveNoteSecret(root, host, 0)
+    const stub: typeof fetch = async input => {
+      const queried = new URL(input.toString()).searchParams.get('k1')
+      const body =
+        queried === k1
+          ? {status: 'ERROR', reason: 'pending'}
+          : {status: 'ERROR', reason: 'Unknown note.'}
+      return new Response(JSON.stringify(body), {
+        headers: {'content-type': 'application/json'}
+      })
+    }
+    const result = await restoreNotes(
+      'https://mint.example/w',
+      root,
+      host,
+      {gap: 2},
+      {fetch: stub}
+    )
+    expect(result.found).toEqual([
+      {index: 0, k1, amountMsat: null, state: 'pending'}
+    ])
+    expect(result.next).toBe(1)
+  })
+
+  it('throws rather than reporting a short walk when the mint goes away', async () => {
+    await expect(
+      restoreNotes('https://mint.example/w', root, 'mint.example', {}, {offline: true})
+    ).rejects.toBeInstanceOf(RequestRefusedError)
+  })
+
+  it('restores what a derived-secret wallet actually minted', async () => {
+    const m = await mint()
+    const host = new URL(m.url).host
+    // the wallet's whole life: one credited note, rotated twice, then split
+    const source = derivedSecretSource(root, host, 0)
+    const options = {randomSecret: source}
+    const first = deriveNoteSecret(root, host, 99)
+    m.state.creditNote(first, 100_000)
+
+    const {callback} = await fetchNoteInfo(noteUrl(m, first))
+    const rotated = await rotateNote(callback, first, options)
+    const again = await rotateNote(callback, rotated.k1, options)
+    const split = await splitNote(callback, [again.k1], 40_000, options)
+    // rotate, rotate, split: four indices consumed
+    expect(source.index()).toBe(4)
+
+    const result = await restoreNotes(`${m.url}/w`, root, host)
+    expect(result.found.map(n => n.index)).toEqual([2, 3])
+    expect(result.found.map(n => n.k1)).toEqual([split.k1, split.change])
+    expect(result.found.map(n => n.amountMsat)).toEqual([40_000, 60_000])
+    expect(result.next).toBe(4)
   })
 })

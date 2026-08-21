@@ -8,12 +8,15 @@ import {readFileSync} from 'node:fs'
 import {createRequire} from 'node:module'
 import {
   applyMintFee,
+  deriveNoteRoot,
+  deriveNoteSecret,
   mintFeeBand,
   withinMintFeeBand,
   decodeBolt11AmountMsat,
   formatFeePercent,
   fromBech32Lnurl,
   grossUpForMintFee,
+  hashK1,
   isAllowedServiceUrl,
   isBolt11Invoice,
   isPreimage,
@@ -35,13 +38,26 @@ import {
   withNewK1,
   withoutK1
 } from '../src/index.js'
-import {bytesToHex} from '@noble/hashes/utils.js'
+import {bytesToHex, hexToBytes} from '@noble/hashes/utils.js'
 
 const require = createRequire(import.meta.url)
 const load = (name: string): any =>
   JSON.parse(
     readFileSync(require.resolve(`lnurlcash-conformance/vectors/${name}`), 'utf8')
   )
+
+// A vector file this library is already written against, but which the
+// installed conformance release predates. Binding it conditionally is what
+// lets the two repos ship in either order: the suite runs the cases the
+// moment the vectors are published, and says plainly that it is not running
+// them until then. It never passes by pretending the file was empty.
+const loadIfPublished = (name: string): any | null => {
+  try {
+    return load(name)
+  } catch {
+    return null
+  }
+}
 
 describe('signature vectors', () => {
   const vectors = load('signature.json')
@@ -310,4 +326,26 @@ describe('the mint fee band', () => {
       }
     }
   })
+})
+
+// Cross-implementation derivation cases. The library's own known answers
+// live in derivation.test.ts; these are the same scheme as the conformance
+// repo states it, which is what a Kotlin, Python or Go port checks itself
+// against.
+const derivation = loadIfPublished('derivation.json')
+
+describe.skipIf(!derivation)('derivation vectors', () => {
+  it('states the scheme this library implements', () => {
+    expect(derivation.scheme.rootKey).toBe('lnurlcash-note-v1')
+    expect(derivation.scheme.rootMsg).toBe('seed')
+    expect(derivation.scheme.secretMsg).toBe('host + ":" + index')
+  })
+
+  for (const c of derivation?.cases ?? []) {
+    it(`derives ${c.host}:${c.index} - ${c.name}`, () => {
+      const root = deriveNoteRoot(hexToBytes(c.seedHex))
+      expect(deriveNoteSecret(root, c.host, c.index)).toBe(c.k1)
+      expect(hashK1(c.k1)).toBe(c.noteId)
+    })
+  }
 })
