@@ -125,7 +125,8 @@ export {
   InsufficientValueError,
   AmbiguousMintError,
   AmbiguousMutationError,
-  classifyNoteError
+  classifyNoteError,
+  newSecretsOf
 } from './errors.js'
 
 export {type LnurlcashOptions} from './transport.js'

@@ -145,6 +145,36 @@ may carry breaking changes; pin an exact version.
   inflated URL fails rather than passing on a signature issued for the true
   amount.
 
+### A retried mutation no longer loses the secret it minted
+
+- Every mutation is a GET, and HTTP stacks retry a GET whose connection
+  dropped: browsers on a stale keep-alive connection, Go's `net/http` on a
+  reused idle one, the JDK's `HttpClient` on any idempotent method with no
+  switch to stop it. The retry is byte-identical, so the mint sees the same
+  request twice and answers the second with its ordinary refusal for a
+  burned input, its inputs having been burned by the first. The caller was
+  told the mutation never happened while a note sat at the hash it had
+  disclosed, and the only copy of that secret went out of scope with the
+  call. The money was not stolen, it was made unspendable by anyone at all.
+- `rotateNote`, `splitNote` and `mergeNotes` now attach the secrets they
+  generated to a `NoteSpentError` or a `NoteUnknownError`, the way
+  `AmbiguousMutationError` already carried them. New `newSecretsOf(err)`
+  reads them off any error in one line, returning an empty array when there
+  are none, so a caller's catch block does not have to know which family it
+  is holding.
+- Only those two classes carry anything. They are the refusals that mean
+  "this input is not spendable", which is exactly what a landed-then-retried
+  mutation looks like. `PendingNoteError` means the input is alive and
+  untouched, and a refusal on policy grounds (dust, a fee, a sunsetting
+  mint) burned nothing, so both carry nothing and a caller may discard its
+  staged records at once.
+- The classification itself is unchanged, deliberately. At the wire a retry
+  and a genuine double spend are the same answer, and whether the input was
+  live when the request went out is knowledge the caller has and this
+  library does not. So it hands back the secret rather than a verdict:
+  persist it, then ask the mint what the note at that secret is worth. A
+  live note means the mutation landed.
+
 ### The mint's signing key is called mintPubkey
 
 - `MintAddressInfo.mintPubkey` carries the wire value unchanged and is the

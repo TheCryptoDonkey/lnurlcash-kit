@@ -23,6 +23,7 @@ import {
   hashK1,
   meltNote,
   mergeNotes,
+  newSecretsOf,
   NoteSpentError,
   NoteUnknownError,
   PendingNoteError,
@@ -683,5 +684,116 @@ describe('restore from a seed', () => {
     expect(result.found.map(n => n.k1)).toEqual([split.k1, split.change])
     expect(result.found.map(n => n.amountMsat)).toEqual([40_000, 60_000])
     expect(result.next).toBe(4)
+  })
+})
+
+describe('a mutation the transport retried', () => {
+  // Exactly what a browser does with a stale keep-alive connection, and what
+  // Go and the JDK do with an idempotent method: send it again, byte for
+  // byte, and hand back the second answer. The mint applied the first one.
+  const retryingFetch: typeof fetch = async (input, init) => {
+    await fetch(input as string, init)
+    return fetch(input as string, init)
+  }
+
+  it('hands back the secret a retried rotate minted', async () => {
+    const m = await mint()
+    const k1 = secret('70')
+    m.state.creditNote(k1, 21_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, k1))
+
+    const err = await rotateNote(callback, k1, {fetch: retryingFetch}).catch(e => e)
+    // the mint saw a burned input the second time and said so
+    expect(err).toBeInstanceOf(NoteSpentError)
+
+    // ...but it really did mint against the hash the first attempt disclosed,
+    // and this is the only copy of that secret in existence
+    const recovered = newSecretsOf(err)
+    expect(recovered).toHaveLength(1)
+    expect(m.state.noteState(recovered[0]!)).toBe('outstanding')
+    const info = await fetchNoteInfo(noteUrl(m, recovered[0]!))
+    expect(info.maxWithdrawable).toBe(21_000)
+  })
+
+  it('hands back both secrets a retried split minted', async () => {
+    const m = await mint()
+    const k1 = secret('71')
+    m.state.creditNote(k1, 100_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, k1))
+
+    const err = await splitNote(callback, [k1], 40_000, {
+      fetch: retryingFetch
+    }).catch(e => e)
+    expect(err).toBeInstanceOf(NoteSpentError)
+    const [split, change] = newSecretsOf(err)
+    expect((await fetchNoteInfo(noteUrl(m, split!))).maxWithdrawable).toBe(40_000)
+    expect((await fetchNoteInfo(noteUrl(m, change!))).maxWithdrawable).toBe(60_000)
+  })
+
+  it('hands back the secret a retried merge minted', async () => {
+    const m = await mint()
+    const a = secret('72')
+    const b = secret('73')
+    m.state.creditNote(a, 21_000)
+    m.state.creditNote(b, 34_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, a))
+
+    const err = await mergeNotes(callback, [a, b], {fetch: retryingFetch}).catch(
+      e => e
+    )
+    expect(err).toBeInstanceOf(NoteSpentError)
+    const [merged] = newSecretsOf(err)
+    expect((await fetchNoteInfo(noteUrl(m, merged!))).maxWithdrawable).toBe(55_000)
+  })
+
+  it('carries a secret from a genuine double spend too, which probes as gone', async () => {
+    const m = await mint()
+    const k1 = secret('74')
+    m.state.creditNote(k1, 21_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, k1))
+    await rotateNote(callback, k1)
+
+    // the same note offered again, long after: an honest refusal
+    const err = await rotateNote(callback, k1).catch(e => e)
+    expect(err).toBeInstanceOf(NoteSpentError)
+    const [orphan] = newSecretsOf(err)
+    // the secrets ride the error either way, because the library cannot tell
+    // the two apart - which is why a caller must ASK rather than assume
+    expect(orphan).toBeDefined()
+    expect(await probeBurnedNote(noteUrl(m, orphan!))).toBe('gone')
+  })
+
+  it('carries nothing when the refusal cannot be a landed mutation', async () => {
+    const m = await mint({sunset: true})
+    const k1 = secret('75')
+    m.state.creditNote(k1, 100_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, k1))
+
+    const err = await splitNote(callback, [k1], 40_000).catch(e => e)
+    expect(err).toBeInstanceOf(ServiceRejectedError)
+    expect(err).not.toBeInstanceOf(NoteSpentError)
+    // a mint refusing on policy burned nothing, so there is nothing to keep
+    // and the caller may discard its staged records at once
+    expect(newSecretsOf(err)).toEqual([])
+    expect(m.state.noteState(k1)).toBe('outstanding')
+  })
+
+  it('reads the secrets off an ambiguous mutation the same way', async () => {
+    const m = await mint({dropAfterMutation: true})
+    const k1 = secret('76')
+    m.state.creditNote(k1, 21_000)
+    const {callback} = await fetchNoteInfo(noteUrl(m, k1))
+
+    const err = await rotateNote(callback, k1).catch(e => e)
+    expect(err).toBeInstanceOf(AmbiguousMutationError)
+    // one helper, both error families: persist whatever it returns
+    expect(newSecretsOf(err)).toEqual(err.newSecrets)
+    expect(newSecretsOf(err)).toHaveLength(1)
+  })
+
+  it('returns nothing for an error that carries no secrets at all', () => {
+    expect(newSecretsOf(new Error('something else'))).toEqual([])
+    expect(newSecretsOf(undefined)).toEqual([])
+    expect(newSecretsOf('not an error')).toEqual([])
   })
 })

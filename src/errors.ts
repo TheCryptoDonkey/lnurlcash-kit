@@ -32,6 +32,11 @@ export class ProtocolError extends LnurlcashError {}
 // declined it. Definitive - the operation did not happen.
 export class ServiceRejectedError extends LnurlcashError {
   readonly reason: string
+  // The WALLET-generated secrets a MUTATION disclosed the hashes of, when
+  // this refusal is one that could describe a mutation the SERVICE had
+  // already applied - see newSecretsOf. Absent on every other refusal, and
+  // absent on every non-mutating call.
+  newSecrets?: string[]
   constructor(reason: string) {
     super(reason || 'The service rejected the request.')
     this.reason = reason
@@ -54,9 +59,24 @@ export class PendingNoteError extends ServiceRejectedError {
 // so a holder may lock the note as spent without asking anything further.
 // At the mutating callback the picture is weaker: the atomic refusal string
 // ("Invalid or already spent k1.") covers an unknown or malformed k1 and an
-// output-id collision just as much as a genuinely spent input, and the
-// request itself burned nothing either way. Before locking a note on the
-// strength of a CALLBACK refusal, probe it with probeBurnedNote.
+// output-id collision just as much as a genuinely spent input. Before
+// locking a note on the strength of a CALLBACK refusal, probe it with
+// probeBurnedNote.
+//
+// Worse than weak: it may be a description of something that DID happen.
+// Every mutation is a GET, and HTTP stacks retry a GET whose connection
+// dropped - browsers on a stale keep-alive connection, Go's net/http on a
+// reused idle one, the JDK's HttpClient on any idempotent method with no
+// switch to stop it. The retry is byte-identical, so the SERVICE sees the
+// same request twice and answers the second one with exactly this refusal,
+// its inputs having been burned by the first. The caller is told the
+// mutation never happened while a note sits at the hash it disclosed.
+//
+// So when this error comes from a mutation it carries `newSecrets`, and
+// discarding them without checking is how the money becomes unspendable by
+// anyone at all. Read them with newSecretsOf, persist them, then ask the
+// SERVICE what the note at each one is worth: a live note means the
+// mutation landed.
 export class NoteSpentError extends ServiceRejectedError {
   constructor(reason: string) {
     super(reason)
@@ -110,6 +130,21 @@ export class InsufficientValueError extends ServiceRejectedError {
     this.minMsat = minMsat
     this.message = `This note is worth ${amountMsat} msat, and ${minMsat} msat is required.`
   }
+}
+
+// The secrets an error is carrying, or none.
+//
+// Two error families carry them. AmbiguousMutationError always does: the
+// outcome is unknown and they may be the only copies of what the SERVICE
+// minted. A definitive refusal does when it names an input as spent or
+// unknown, because that is also what a mutation the SERVICE ALREADY applied
+// looks like when the request is sent a second time - see the note on
+// NoteSpentError. Either way the rule for a caller is the same, and it is
+// the first thing to do: persist these before anything else.
+export const newSecretsOf = (err: unknown): string[] => {
+  if (err instanceof AmbiguousMutationError) return err.newSecrets
+  if (err instanceof ServiceRejectedError) return err.newSecrets ?? []
+  return []
 }
 
 // A SERVICE's wording for "this k1 is dead" varies by implementation and

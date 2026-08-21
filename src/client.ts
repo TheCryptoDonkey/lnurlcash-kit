@@ -423,6 +423,25 @@ export const mergeNotesWithHash = async (
 }
 
 // ---- the generating primitives ----
+//
+// A definitive refusal that names an input as spent or unknown is also what
+// a mutation the SERVICE already applied looks like when an HTTP stack
+// retries the GET it was carried on. The library cannot tell those apart -
+// at the wire they are the same answer, and whether the input was live when
+// the request went out is knowledge the caller has and this layer does not -
+// so it hands back the secrets rather than a verdict. See NoteSpentError.
+//
+// Only those two classes. PendingNoteError means the input is alive and
+// untouched; a refusal on policy grounds (dust, a fee, a sunsetting mint)
+// burned nothing. Neither can be a landed mutation, so neither carries
+// anything and a caller may discard its staged records at once.
+const keepingOutputs = <T,>(err: T, newSecrets: string[]): T => {
+  if (err instanceof NoteSpentError || err instanceof NoteUnknownError) {
+    err.newSecrets = newSecrets
+  }
+  return err
+}
+
 
 export type RotateResult = {k1: string; signature?: string}
 
@@ -452,7 +471,7 @@ export const rotateNote = async (
     if (err instanceof AmbiguousMintError) {
       throw new AmbiguousMutationError((err as Error).message, [newK1])
     }
-    throw err
+    throw keepingOutputs(err, [newK1])
   }
 }
 
@@ -496,7 +515,7 @@ export const splitNote = async (
     if (err instanceof AmbiguousMintError) {
       throw new AmbiguousMutationError((err as Error).message, [newK1, changeK1])
     }
-    throw err
+    throw keepingOutputs(err, [newK1, changeK1])
   }
 }
 
@@ -515,7 +534,7 @@ export const mergeNotes = async (
     if (err instanceof AmbiguousMintError) {
       throw new AmbiguousMutationError((err as Error).message, [newK1])
     }
-    throw err
+    throw keepingOutputs(err, [newK1])
   }
 }
 

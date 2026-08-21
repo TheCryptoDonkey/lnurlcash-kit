@@ -54,9 +54,12 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
    `amount` in a note URL is an unverified claim.
 2. On rotate/split/merge the WALLET generates the replacement secret and
    discloses only sha256(secret). Never accept a service-supplied k1.
-3. Catch AmbiguousMutationError, PERSIST err.newSecrets before anything
-   else, then call probeBurnedNote to learn what happened. Treating it as
-   failure destroys money the service may already have minted.
+3. On ANY error from a mutation call newSecretsOf(err) FIRST, persist what
+   it returns, then call probeBurnedNote to learn what happened. Treating a
+   failure as a failure destroys money the service may already have minted.
+   AmbiguousMutationError always carries secrets; so does a NoteSpentError
+   or NoteUnknownError from a mutation, because that is also what a retried
+   GET looks like once its first attempt burned the input.
 4. RequestRefusedError means nothing was sent - safe to treat as no-op.
 5. A melt's OK means IN FLIGHT, not spent. PendingNoteError means retry, not
    spent.
@@ -89,10 +92,13 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
 RequestRefusedError    nothing sent, note untouched
 ServiceRejectedError   processed and refused (definitive)
   PendingNoteError     a melt is in flight on this k1 - retry
-  NoteSpentError       authoritative: already burned
+  NoteSpentError       authoritative: already burned - but from a MUTATION it
+                       may be a retry whose first attempt landed; read
+                       newSecretsOf(err) before believing it
   NoteUnknownError     service does not recognise it
 AmbiguousMintError     outcome UNKNOWN - assume nothing
   AmbiguousMutationError  carries .newSecrets - persist them
+newSecretsOf(err) -> string[]  the secrets any error is carrying, or none
 ProtocolError          a non-mutating response did not match the spec
 
 ## Conformance

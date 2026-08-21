@@ -122,6 +122,31 @@ This is not hypothetical: the same hazard broke the
 development, by two different mechanisms, and is now a named scenario in the
 conformance vectors.
 
+Because a retry cannot always be prevented, a mutation refused with the
+input already spent or unknown carries its outputs anyway:
+
+```ts
+try {
+  await rotateNote(callback, oldK1)
+} catch (err) {
+  const secrets = newSecretsOf(err)   // works on both error families
+  if (secrets.length) {
+    await save(secrets)               // first. always.
+    // then ask: is there a note at that secret?
+    const fate = await probeBurnedNote(buildNoteUrl(base, secrets[0]))
+    // 'live' -> the mutation landed and you own the output
+    // 'gone' -> the refusal was honest, discard
+  }
+}
+```
+
+The class does not change: at the wire a retry and a genuine double spend are
+the same answer, and whether your input was live when the request went out is
+something you know and this library does not. So it hands back the secret
+rather than a verdict. A refusal that cannot be a landed mutation, such as a
+mint refusing on policy grounds, carries nothing, and you can discard your
+staged records at once.
+
 **4. A melt's `OK` means "in flight", not "spent".** The service pays
 asynchronously and only burns the note once the payment settles, restoring
 it if the payment fails. A failed melt is never reported back through the
