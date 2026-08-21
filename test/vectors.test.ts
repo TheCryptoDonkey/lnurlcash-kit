@@ -395,8 +395,8 @@ const derivation = loadIfPublished('derivation.json')
 describe.skipIf(!derivation)('derivation vectors', () => {
   it('states the scheme this library implements', () => {
     expect(derivation.scheme.rootKey).toBe('lnurlcash-note-v1')
-    expect(derivation.scheme.rootMsg).toBe('seed')
-    expect(derivation.scheme.secretMsg).toBe('host + ":" + index')
+    expect(derivation.scheme.rootMsg).toBe('seed bytes')
+    expect(derivation.scheme.secretMsg).toBe('host:index')
   })
 
   for (const c of derivation?.cases ?? []) {

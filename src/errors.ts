@@ -97,6 +97,21 @@ export class AmbiguousMutationError extends AmbiguousMintError {
   }
 }
 
+// A note offered as payment is worth less than the price asked. Definitive,
+// and nothing was burned: the note is untouched and still belongs to
+// whoever offered it. Carries both numbers so a server can say how short it
+// was rather than "declined".
+export class InsufficientValueError extends ServiceRejectedError {
+  readonly amountMsat: number
+  readonly minMsat: number
+  constructor(amountMsat: number, minMsat: number) {
+    super(`worth ${amountMsat} msat, needs ${minMsat} msat`)
+    this.amountMsat = amountMsat
+    this.minMsat = minMsat
+    this.message = `This note is worth ${amountMsat} msat, and ${minMsat} msat is required.`
+  }
+}
+
 // A SERVICE's wording for "this k1 is dead" varies by implementation and
 // by endpoint. An informational GET can afford to distinguish "Note
 // already spent." from "Unknown note.", while the mutating callback - an
