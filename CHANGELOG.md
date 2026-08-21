@@ -145,6 +145,23 @@ may carry breaking changes; pin an exact version.
   inflated URL fails rather than passing on a signature issued for the true
   amount.
 
+### The mint's signing key is called mintPubkey
+
+- `MintAddressInfo.mintPubkey` carries the wire value unchanged and is the
+  name to reach for. `nodePubkey` remains, populated with the same value,
+  and is deprecated: it will be removed at the next breaking change.
+  Nothing breaks in this release.
+- The two keys in a discovery document are different keys. `mintPubkey` is
+  what a note's signature verifies against; the Lightning node's identity
+  key is embedded in `nodeUri`. Every other `node*` field on the type
+  really is about the node - alias, colour, capacity, channel and peer
+  counts - so the signing key was the one exception, and its name said
+  nothing about that. A reader who pulled the pubkey out of `nodeUri` and
+  tried to verify a note with it got a failure that explained nothing.
+- It also makes the package internally consistent: the same key is already
+  called `mintPubkey` on a note's own info, so a reader moving between the
+  two objects met one key under two names.
+
 ### Payment requests
 
 - `encodePaymentRequest(request)`, `decodePaymentRequest(string, {now})`,

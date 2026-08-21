@@ -377,6 +377,8 @@ describe('minting', () => {
   it('finds the experimental mint address', async () => {
     const m = await mint()
     const address = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`)
+    expect(address.mintPubkey).toBe(m.state.pubkey)
+    // the deprecated alias carries the same value for one release
     expect(address.nodePubkey).toBe(m.state.pubkey)
     expect(address.payLink).toBe(`${m.url}/.well-known/lnurlp/mint`)
     // Against the real mock, unstubbed: the conformance mint advertises

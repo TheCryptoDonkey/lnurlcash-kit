@@ -165,9 +165,9 @@ as forged. A mint publishes the keys it has retired as `previousPubkeys` on
 its mint address, and verification takes the whole set:
 
 ```ts
-const {nodePubkey, previousPubkeys = []} = await fetchMintAddress(addressUrl)
+const {mintPubkey, previousPubkeys = []} = await fetchMintAddress(addressUrl)
 const check = verifyNoteSignatureAgainst(k1, amountMsat, sig, [
-  nodePubkey,
+  mintPubkey,
   ...previousPubkeys
 ])
 // check.pubkey names the key that signed. A note that verifies only against
@@ -178,6 +178,12 @@ const check = verifyNoteSignatureAgainst(k1, amountMsat, sig, [
 boolean. An empty list is a rejection, not a pass.
 
 ### What else a mint says about itself
+
+`mintPubkey` is the key note signatures verify against, and it is *not* the
+Lightning node's key: that one is embedded in `nodeUri`, and every other
+`node*` field really is about the node. Verifying a note against the key
+pulled out of `nodeUri` fails, and the failure says nothing about why.
+`nodePubkey` is a deprecated alias for the same value, kept for one release.
 
 `fetchMintAddress` reads the experimental discovery endpoint, and a mint may
 publish a `name`, a `description`, `contact` details, a `tosUrl`, a `motd`,

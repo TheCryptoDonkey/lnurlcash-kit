@@ -534,6 +534,38 @@ describe('mint address fields', () => {
     expect(info.payLink).toBe('https://mint.example/.well-known/lnurlp/mint')
   })
 
+  it('names the note-signing key mintPubkey, with nodePubkey as the old alias', async () => {
+    const info = await fetchAddress()
+    expect(info.mintPubkey).toBe('02' + 'ab'.repeat(32))
+    // deprecated, same value, gone at the next breaking change
+    expect(info.nodePubkey).toBe(info.mintPubkey)
+  })
+
+  it('leaves both names undefined when a mint publishes no signing key', async () => {
+    const info = await fetchMintAddress(
+      'https://mint.example/.well-known/lnurlw/mint',
+      {
+        fetch: jsonFetch({
+          tag: 'withdrawRequest',
+          callback: 'https://mint.example/w/cb',
+          maxWithdrawable: 100_000_000,
+          payLink: 'https://mint.example/.well-known/lnurlp/mint'
+        })
+      }
+    )
+    expect(info.mintPubkey).toBeUndefined()
+    expect(info.nodePubkey).toBeUndefined()
+  })
+
+  it('does not confuse the signing key with the node in nodeUri', async () => {
+    const nodeKey = '03' + '11'.repeat(32)
+    const info = await fetchAddress({nodeUri: `${nodeKey}@127.0.0.1:9735`})
+    // two different keys in one document: this is the trap the rename exists
+    // to close
+    expect(info.mintPubkey).not.toBe(nodeKey)
+    expect(info.nodeUri).toContain(nodeKey)
+  })
+
   it('still refuses a response that is not a mint address', async () => {
     await expect(
       fetchMintAddress('https://mint.example/.well-known/lnurlw/mint', {

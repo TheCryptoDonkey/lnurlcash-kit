@@ -117,10 +117,18 @@ export type MintAddressInfo = {
   minWithdrawable: number
   maxWithdrawable: number
   defaultDescription?: string
-  // The wire field is `mintPubkey`, LUD-25's term for a note's signing key.
-  // Renamed here because at THIS endpoint it is never a note's key, always
-  // the SERVICE's own node identity - it sits alongside the other node
-  // fields for that reason.
+  // The key a note's signature verifies against, straight from the wire
+  // field of the same name. This is NOT the Lightning node's identity key:
+  // that one is embedded in `nodeUri` below, and every other node* field on
+  // this type really is about the node. Verifying a note against the key
+  // pulled out of nodeUri fails, and the failure says nothing about why.
+  mintPubkey?: string
+  // Deprecated alias for `mintPubkey`, carrying the same value. Reach for
+  // `mintPubkey`: it matches the wire, it matches what the same key is
+  // called on a note's own info, and it does not read as the node key it
+  // sits next to. Removed at the next breaking change.
+  //
+  // @deprecated use mintPubkey
   nodePubkey?: string
   payLink: string
   nodeAlias?: string
@@ -225,6 +233,8 @@ export const fetchMintAddress = async (
     minWithdrawable: asNumber(body.minWithdrawable) ?? 0,
     maxWithdrawable: body.maxWithdrawable,
     defaultDescription: asString(body.defaultDescription),
+    mintPubkey: asString(body.mintPubkey),
+    // the same value under both names for one release, so nothing breaks
     nodePubkey: asString(body.mintPubkey),
     payLink: body.payLink,
     nodeAlias: asString(body.nodeAlias),

@@ -29,8 +29,10 @@ settleNoteForValue(noteUrl, {mints, minMsat, requireSignature?}, opts?)
 probeBurnedNote(url, opts?) -> 'live' | 'gone' | 'unknown'
 verifyNoteSignature(k1, amountMsat, sigHex, pubkeyHex | pubkeyHex[]) -> boolean
 verifyNoteSignatureAgainst(k1, amountMsat, sigHex, keys) -> {valid, pubkey}
-fetchMintAddress(url, opts?) -> {nodePubkey?, payLink, name?, motd?, contact?,
+fetchMintAddress(url, opts?) -> {mintPubkey?, payLink, name?, motd?, contact?,
   tosUrl?, fees?, version?, previousPubkeys?, node*?}  experimental, often absent
+  mintPubkey verifies note signatures. It is NOT the node key in nodeUri.
+  nodePubkey is a deprecated alias for mintPubkey, dropped next breaking change.
 deriveNoteRoot(seedBytes) -> Uint8Array    HMAC-SHA256("lnurlcash-note-v1", seed)
 deriveNoteSecret(root, host, index) -> k1  HMAC-SHA256(root, host + ":" + index)
 derivedSecretSource(root, host, start) -> RandomSecret & {index()}
