@@ -105,6 +105,13 @@ export class AmbiguousMutationError extends AmbiguousMintError {
 // k1. Classified here so every call site gets a consistent typed error
 // instead of re-parsing reason text.
 export const classifyNoteError = (reason: string): ServiceRejectedError => {
+  // "pending" is the one reason string LUD-25 fixes verbatim, and it is the
+  // one case that is neither spent nor unknown: the note is alive with a
+  // melt in flight. Classified first so an informational GET that reports it
+  // reaches callers as PendingNoteError rather than a bare rejection they
+  // would have to re-parse. PendingNoteError extends ServiceRejectedError,
+  // so anything already catching the parent is unaffected.
+  if (reason === 'pending') return new PendingNoteError(reason)
   if (/spent/i.test(reason)) return new NoteSpentError(reason)
   if (/unknown|not found/i.test(reason)) return new NoteUnknownError(reason)
   return new ServiceRejectedError(reason)

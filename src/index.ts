@@ -58,8 +58,18 @@ export {
   hashK1,
   isPreimage,
   defaultRandomSecret,
+  deriveNoteRoot,
+  deriveNoteSecret,
+  derivedSecretSource,
   type RandomSecret
 } from './secrets.js'
+
+export {
+  restoreNotes,
+  type RestoredNote,
+  type RestoreResult,
+  type RestoreOptions
+} from './restore.js'
 
 export {
   verifyNoteSignature,
@@ -131,6 +141,7 @@ export {
 
 import type {LnurlcashOptions} from './transport.js'
 import * as client from './client.js'
+import {restoreNotes, type RestoreOptions} from './restore.js'
 
 // Every request function takes options as its last argument, so they can be
 // used directly. createClient binds one set of options once, for callers
@@ -168,7 +179,13 @@ export const createClient = (options: LnurlcashOptions = {}) => ({
   requestInvoice: (payCallback: string, amountMsat: number) =>
     client.requestInvoice(payCallback, amountMsat, options),
   fetchInvoiceVerification: (verifyUrl: string) =>
-    client.fetchInvoiceVerification(verifyUrl, options)
+    client.fetchInvoiceVerification(verifyUrl, options),
+  restoreNotes: (
+    baseUrl: string,
+    root: Uint8Array,
+    host: string,
+    restoreOptions: RestoreOptions = {}
+  ) => restoreNotes(baseUrl, root, host, restoreOptions, options)
 })
 
 export type LnurlcashClient = ReturnType<typeof createClient>
