@@ -3,6 +3,26 @@
 Semantic versioning. While the LUD-25 draft is unmerged, `0.x` minor bumps
 may carry breaking changes; pin an exact version.
 
+## 0.1.2 - 2026-08-21
+
+- `mintFeeBand` and `withinMintFeeBand`. LUD-25 states the mint fee as
+  `base_fee_msat` plus a ppm cut and says nothing about rounding, and the
+  two live implementations read that differently: dni's lnurl-mint - the
+  reference, and what every public mint on the awesome list except moneyer
+  runs - ceilings the fee to a whole sat on purpose so the mint is "never
+  short a sat", while moneyer withholds the msat-exact amount.
+- So `applyMintFee` is right about exactly one of them, and a wallet
+  comparing a credited note against it warns spuriously against the other.
+  Measured on real sats: 40,000 msat at a 1000 + 1000 ppm mint credited
+  38,000, not the 38,960 the formula gives.
+- `mintFeeBand` returns the range - the formula is the most a holder can be
+  credited, the sat-ceilinged fee the least - and `withinMintFeeBand` is
+  what a caller should compare against. `applyMintFee` is unchanged and
+  still means the formula; it is now documented as the generous edge rather
+  than the answer.
+- Nothing here decides which reading is correct. That is a question for
+  lnurl/luds#301.
+
 ## 0.1.1 - 2026-08-20
 
 - `fetchMintAddress` now populates `nodeCapacityMsat`. The wire field is
