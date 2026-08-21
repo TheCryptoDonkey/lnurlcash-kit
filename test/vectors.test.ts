@@ -8,8 +8,13 @@ import {readFileSync} from 'node:fs'
 import {createRequire} from 'node:module'
 import {
   applyMintFee,
+  decodePaymentRequest,
   deriveNoteRoot,
   deriveNoteSecret,
+  encodePaymentRequest,
+  isPaymentRequest,
+  PAYMENT_REQUEST_PREFIX,
+  ProtocolError,
   mintFeeBand,
   withinMintFeeBand,
   decodeBolt11AmountMsat,
@@ -404,6 +409,41 @@ describe.skipIf(!derivation)('derivation vectors', () => {
       const root = deriveNoteRoot(hexToBytes(c.seedHex))
       expect(deriveNoteSecret(root, c.host, c.index)).toBe(c.k1)
       expect(hashK1(c.k1)).toBe(c.noteId)
+    })
+  }
+})
+
+// Payment requests. The encoding is canonical, so a vector can state the
+// exact string a request must produce and any implementation in any language
+// has to produce it too.
+const paymentRequests = loadIfPublished('payment-request.json')
+
+describe.skipIf(!paymentRequests)('payment request vectors', () => {
+  // The vector's clock, so an expiry case means the same thing every day.
+  const now = paymentRequests?.evaluatedAt
+
+  it('agrees on the prefix', () => {
+    expect(paymentRequests.prefix).toBe(PAYMENT_REQUEST_PREFIX)
+  })
+
+  for (const c of paymentRequests?.encode ?? []) {
+    it(`encodes: ${c.name}`, () => {
+      expect(encodePaymentRequest(c.request)).toBe(c.encoded)
+      // and back again, unchanged
+      expect(decodePaymentRequest(c.encoded, {now: 0})).toEqual(c.request)
+    })
+  }
+
+  for (const c of paymentRequests?.decode ?? []) {
+    it(`${c.valid ? 'accepts' : `refuses (${c.reason})`}: ${c.name}`, () => {
+      if (c.valid) {
+        expect(decodePaymentRequest(c.input, {now})).toEqual(c.request)
+        return
+      }
+      expect(() => decodePaymentRequest(c.input, {now})).toThrow(ProtocolError)
+      // an expired request is still recognisably a payment request; a
+      // malformed one is not
+      if (c.reason !== 'expired') expect(isPaymentRequest(c.input)).toBe(false)
     })
   }
 })
