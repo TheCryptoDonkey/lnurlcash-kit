@@ -178,6 +178,10 @@ The reference implementations, both dni's, both MIT:
 - [lnurl-mint](https://github.com/dni/lnurl-mint) — the reference service
 - [lnurl-wallet](https://github.com/dni/lnurl-wallet) — the reference wallet
 
+Everything else built on LNURLcash — the other wallets and mints, the
+hardware vault, the sibling language ports — is indexed in
+[awesome-lnurlcash](https://github.com/TheCryptoDonkey/awesome-lnurlcash).
+
 Changes made on extraction are listed in [CHANGELOG.md](CHANGELOG.md); two
 are behavioural fixes worth reading if you are porting from that code.
 
