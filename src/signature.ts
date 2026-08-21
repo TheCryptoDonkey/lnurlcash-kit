@@ -40,8 +40,10 @@ export const noteSignatureDigest = (
     )
   )
 
+// ---- verification ----
+//
 // Recovers the signer's pubkey from (k1, amountMsat, signature) and checks
-// it against `mintPubkey` - true only if both match.
+// it against the key, or keys, the caller trusts.
 //
 // The signature is 65 bytes, but which end carries the recovery id varies
 // by implementation in practice: LUD-25 calls for r || s || recovery-id,
@@ -49,30 +51,53 @@ export const noteSignatureDigest = (
 // its node's signmessage output unreordered as recovery-id || r || s. That
 // is fixed upstream, but other implementations may still get it wrong.
 // Trying both orderings costs nothing security-wise - recovering against
-// the wrong one yields an unrelated pubkey that cannot match mintPubkey -
+// the wrong one yields an unrelated pubkey that cannot match a trusted key -
 // and means a note verifies regardless of which convention issued it.
-export const verifyNoteSignature = (
+//
+// Several keys are accepted because a SERVICE may rotate the key it signs
+// with. Rotating invalidates nothing: the notes already issued are still
+// genuine, and their signatures still verify against the key that made
+// them. A SERVICE publishes the retired keys as `previousPubkeys` on its
+// mint address, and a holder passes the current key and that history
+// together, so a legitimate rotation does not look like a forgery.
+
+export type SignatureCheck =
+  | {valid: true; pubkey: string}
+  | {valid: false; pubkey: null}
+
+const NO_MATCH = {valid: false, pubkey: null} as const
+
+// Like verifyNoteSignature, but reports WHICH key signed. Worth knowing:
+// a note that verifies only against a retired key is one a wallet should
+// re-sign by rotating it, and a wallet tracking a SERVICE's key history
+// needs to see the difference to do that.
+export const verifyNoteSignatureAgainst = (
   k1: string,
   amountMsat: number,
   signatureHex: string,
-  mintPubkeyHex: string
-): boolean => {
+  mintPubkeys: string | string[]
+): SignatureCheck => {
+  const targets = (Array.isArray(mintPubkeys) ? mintPubkeys : [mintPubkeys])
+    .filter(key => typeof key === 'string')
+    .map(key => key.trim().toLowerCase())
+  // Nothing to verify against is a "no", not a pass. A caller that reaches
+  // here with an empty history has no trusted key at all.
+  if (targets.length === 0) return NO_MATCH
   let wireSig: Uint8Array
   try {
     wireSig = hexToBytes(signatureHex)
   } catch {
-    return false
+    return NO_MATCH
   }
-  if (wireSig.length !== 65) return false
+  if (wireSig.length !== 65) return NO_MATCH
   // a malformed k1 (non-hex) makes the hashing throw - an unverifiable
   // signature is a "no", never a crash
   let digest: Uint8Array
   try {
     digest = noteSignatureDigest(k1, amountMsat)
   } catch {
-    return false
+    return NO_MATCH
   }
-  const target = mintPubkeyHex.trim().toLowerCase()
   const recoveryIdFirst = new Uint8Array([
     wireSig[64]!,
     ...wireSig.subarray(0, 64)
@@ -84,13 +109,26 @@ export const verifyNoteSignature = (
       // recovering against a value nothing ever signed - which never
       // matches a real signer's key, and is invisible in a test suite whose
       // mock signer makes the same mistake in the same direction.
-      const recovered = secp256k1.recoverPublicKey(candidate, digest, {
-        prehash: false
-      })
-      if (bytesToHex(recovered) === target) return true
+      const recovered = bytesToHex(
+        secp256k1.recoverPublicKey(candidate, digest, {prehash: false})
+      )
+      // The recovery yields one key per ordering, so this is a membership
+      // test against the trusted set, not a signature check per key: a long
+      // key history costs a string comparison each, not a recovery each.
+      if (targets.includes(recovered)) return {valid: true, pubkey: recovered}
     } catch {
       // not a valid recovery under this ordering - try the other
     }
   }
-  return false
+  return NO_MATCH
 }
+
+// True if the signature verifies against the key, or against any key in the
+// list. Pass a SERVICE's current signing key together with the
+// `previousPubkeys` it publishes to accept notes issued before a rotation.
+export const verifyNoteSignature = (
+  k1: string,
+  amountMsat: number,
+  signatureHex: string,
+  mintPubkeys: string | string[]
+): boolean => verifyNoteSignatureAgainst(k1, amountMsat, signatureHex, mintPubkeys).valid

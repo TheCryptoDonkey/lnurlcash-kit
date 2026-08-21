@@ -15,6 +15,7 @@ import {
   RequestRefusedError,
   ServiceRejectedError,
   fetchInvoiceVerification,
+  fetchMintAddress,
   fetchNoteInfo,
   fetchPayRequest,
   meltNote,
@@ -410,5 +411,134 @@ describe('the default fetch and browser method semantics', () => {
     } finally {
       globalThis.fetch = original
     }
+  })
+})
+
+describe('mint address fields', () => {
+  const address = (extra: Record<string, unknown> = {}) => ({
+    tag: 'withdrawRequest',
+    callback: 'https://mint.example/w/cb',
+    minWithdrawable: 1000,
+    maxWithdrawable: 100_000_000,
+    payLink: 'https://mint.example/.well-known/lnurlp/mint',
+    mintPubkey: '02' + 'ab'.repeat(32),
+    ...extra
+  })
+
+  const fetchAddress = (extra: Record<string, unknown> = {}) =>
+    fetchMintAddress('https://mint.example/.well-known/lnurlw/mint', {
+      fetch: jsonFetch(address(extra))
+    })
+
+  it('reads the operator fields a mint publishes', async () => {
+    const info = await fetchAddress({
+      name: 'Example Mint',
+      description: 'A mint for examples.',
+      contact: {
+        nostr: 'npub1example',
+        email: 'operator@mint.example',
+        url: 'https://mint.example/about'
+      },
+      tosUrl: 'https://mint.example/terms',
+      motd: 'Fees change on 1 September.',
+      fees: {baseFeeMsat: 1000, feePpm: 2500},
+      version: '1.4.0',
+      previousPubkeys: ['02' + 'cd'.repeat(32)]
+    })
+    expect(info.name).toBe('Example Mint')
+    expect(info.description).toBe('A mint for examples.')
+    expect(info.contact).toEqual({
+      nostr: 'npub1example',
+      email: 'operator@mint.example',
+      url: 'https://mint.example/about'
+    })
+    expect(info.tosUrl).toBe('https://mint.example/terms')
+    expect(info.motd).toBe('Fees change on 1 September.')
+    expect(info.fees).toEqual({baseFeeMsat: 1000, feePpm: 2500})
+    expect(info.version).toBe('1.4.0')
+    expect(info.previousPubkeys).toEqual(['02' + 'cd'.repeat(32)])
+  })
+
+  it('leaves every operator field undefined when a mint publishes none', async () => {
+    const info = await fetchAddress()
+    expect(info.name).toBeUndefined()
+    expect(info.description).toBeUndefined()
+    expect(info.contact).toBeUndefined()
+    expect(info.tosUrl).toBeUndefined()
+    expect(info.motd).toBeUndefined()
+    expect(info.fees).toBeUndefined()
+    expect(info.version).toBeUndefined()
+    // absent is not the same as "no keys have ever been retired" - a wallet
+    // must not read a missing list as an authoritative empty one
+    expect(info.previousPubkeys).toBeUndefined()
+  })
+
+  it('keeps an explicitly empty key history', async () => {
+    expect((await fetchAddress({previousPubkeys: []})).previousPubkeys).toEqual([])
+  })
+
+  it('drops fields whose types are wrong rather than passing them on', async () => {
+    const info = await fetchAddress({
+      name: 42,
+      contact: 'operator@mint.example',
+      tosUrl: {href: 'https://mint.example/terms'},
+      fees: {baseFeeMsat: 'free'},
+      previousPubkeys: ['02' + 'cd'.repeat(32), 7, null]
+    })
+    expect(info.name).toBeUndefined()
+    expect(info.contact).toBeUndefined()
+    expect(info.tosUrl).toBeUndefined()
+    expect(info.fees).toBeUndefined()
+    expect(info.previousPubkeys).toEqual(['02' + 'cd'.repeat(32)])
+  })
+
+  it('reads a partial contact, and a fee that states only one component', async () => {
+    const info = await fetchAddress({
+      contact: {email: 'operator@mint.example', nostr: 12},
+      fees: {baseFeeMsat: 1000}
+    })
+    expect(info.contact).toEqual({
+      nostr: undefined,
+      email: 'operator@mint.example',
+      url: undefined
+    })
+    // the component a mint omits is zero, the same reading the fee prose gets
+    expect(info.fees).toEqual({baseFeeMsat: 1000, feePpm: 0})
+  })
+
+  it('accepts either spelling of the node capacity', async () => {
+    expect((await fetchAddress({nodeCapacity: 500_000_000})).nodeCapacityMsat).toBe(
+      500_000_000
+    )
+    // one live mint sends the suffixed name; it used to survive only by
+    // riding the spread this mapping replaced
+    expect(
+      (await fetchAddress({nodeCapacityMsat: 210_000_000})).nodeCapacityMsat
+    ).toBe(210_000_000)
+    // the bare wire name wins where a mint emits both
+    expect(
+      (
+        await fetchAddress({
+          nodeCapacity: 500_000_000,
+          nodeCapacityMsat: 210_000_000
+        })
+      ).nodeCapacityMsat
+    ).toBe(500_000_000)
+  })
+
+  it('does not carry unrecognised wire fields onto the typed object', async () => {
+    const info: Record<string, unknown> = (await fetchAddress({
+      somethingNew: 'a field this version has never heard of'
+    })) as never
+    expect(info.somethingNew).toBeUndefined()
+    expect(info.payLink).toBe('https://mint.example/.well-known/lnurlp/mint')
+  })
+
+  it('still refuses a response that is not a mint address', async () => {
+    await expect(
+      fetchMintAddress('https://mint.example/.well-known/lnurlw/mint', {
+        fetch: jsonFetch({tag: 'payRequest', callback: 'https://mint.example/p/cb'})
+      })
+    ).rejects.toBeInstanceOf(ProtocolError)
   })
 })
