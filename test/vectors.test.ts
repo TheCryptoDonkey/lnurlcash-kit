@@ -8,6 +8,8 @@ import {readFileSync} from 'node:fs'
 import {createRequire} from 'node:module'
 import {
   applyMintFee,
+  mintFeeBand,
+  withinMintFeeBand,
   decodeBolt11AmountMsat,
   formatFeePercent,
   fromBech32Lnurl,
@@ -264,5 +266,48 @@ describe('fee parsing beyond the vectors', () => {
     expect(
       parseMintFee(JSON.stringify([['text/plain', `Mint fees: 0,${huge}`]]))
     ).toBeNull()
+  })
+})
+
+// The fee band. LUD-25 does not say whether the fee rounds, and the two
+// live implementations disagree, so a wallet that predicts one number
+// warns spuriously against the other. Both numbers below were measured on
+// real sats on 2026-08-21.
+describe('the mint fee band', () => {
+  it('spans the reference mint and moneyer, which disagree', () => {
+    // mint.forgesworn.dev (dni's lnurl-mint): 40_000 gross at 1000 + 1000ppm
+    // credited 38_000, because it ceilings a 1_040 msat fee to 2_000.
+    const fee = {baseFeeMsat: 1000, feePpm: 1000}
+    const band = mintFeeBand(40_000, fee)
+    expect(band.maxNetMsat).toBe(38_960) // the msat-exact formula
+    expect(band.minNetMsat).toBe(38_000) // the sat-ceilinged fee
+    expect(withinMintFeeBand(40_000, 38_000, fee)).toBe(true)
+    expect(withinMintFeeBand(40_000, 38_960, fee)).toBe(true)
+    // A msat past either edge is not explained by the rounding question.
+    expect(withinMintFeeBand(40_000, 37_999, fee)).toBe(false)
+    expect(withinMintFeeBand(40_000, 38_961, fee)).toBe(false)
+  })
+
+  it('collapses to a point when the fee already lands on a whole sat', () => {
+    // moneyer.dev: 100_000 gross at 5000 + 1000ppm is exactly 5_100 msat,
+    // so ceilinging gives 6_000 and the band is a real range...
+    const moneyer = {baseFeeMsat: 5000, feePpm: 1000}
+    expect(mintFeeBand(100_000, moneyer)).toEqual({minNetMsat: 94_000, maxNetMsat: 94_900})
+    // ...but a fee that is already whole leaves nothing to round.
+    const whole = {baseFeeMsat: 2000, feePpm: 0}
+    expect(mintFeeBand(50_000, whole)).toEqual({minNetMsat: 48_000, maxNetMsat: 48_000})
+  })
+
+  it('never reports a negative net', () => {
+    const fee = {baseFeeMsat: 10_000, feePpm: 0}
+    expect(mintFeeBand(1_000, fee)).toEqual({minNetMsat: 0, maxNetMsat: 0})
+  })
+
+  it('agrees with applyMintFee at the generous edge', () => {
+    for (const gross of [12_000, 55_055, 100_000, 21_000_000]) {
+      for (const fee of [{baseFeeMsat: 0, feePpm: 0}, {baseFeeMsat: 1000, feePpm: 1000}, {baseFeeMsat: 5000, feePpm: 2500}]) {
+        expect(mintFeeBand(gross, fee).maxNetMsat).toBe(applyMintFee(gross, fee))
+      }
+    }
   })
 })

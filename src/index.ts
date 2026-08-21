@@ -70,10 +70,13 @@ export {
 export {
   parseMintFee,
   applyMintFee,
+  mintFeeBand,
+  withinMintFeeBand,
   grossUpForMintFee,
   formatFeePercent,
   describeMintFee,
-  type MintFee
+  type MintFee,
+  type MintFeeBand
 } from './fees.js'
 
 export {

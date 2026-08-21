@@ -63,6 +63,43 @@ const proportionalFee = (grossMsat: number, feePpm: number): number =>
 export const applyMintFee = (grossMsat: number, fee: MintFee): number =>
   Math.max(0, grossMsat - fee.baseFeeMsat - proportionalFee(grossMsat, fee.feePpm))
 
+// LUD-25 states the mint fee as `base_fee_msat` plus a ppm cut and says
+// nothing at all about rounding. Two live implementations read that
+// differently, and both are defensible:
+//
+//   - dni's lnurl-mint, the reference, and what every public mint on the
+//     awesome list except moneyer runs, ceilings the fee to a whole sat on
+//     purpose, so the mint is "never short a sat". 1_040 msat becomes
+//     2_000.
+//   - moneyer withholds the msat-exact amount.
+//
+// So a wallet predicting one number warns spuriously against the other:
+// against lnurl-mint the note lands up to 999 msat lighter than the
+// formula says, and telling a holder their mint short-changed them when
+// it did exactly what it documents is worse than saying nothing.
+//
+// The honest prediction is a range. The formula is the most a holder can
+// be credited; the sat-ceilinged fee is the least. Until the draft settles
+// which is correct (lnurl/luds#301), treat anything inside as compliant.
+export type MintFeeBand = {minNetMsat: number; maxNetMsat: number}
+
+export const mintFeeBand = (grossMsat: number, fee: MintFee): MintFeeBand => {
+  const exactFee = fee.baseFeeMsat + proportionalFee(grossMsat, fee.feePpm)
+  const satCeilinged = Math.ceil(exactFee / 1000) * 1000
+  return {
+    minNetMsat: Math.max(0, grossMsat - satCeilinged),
+    maxNetMsat: Math.max(0, grossMsat - exactFee)
+  }
+}
+
+// Whether a credited note is consistent with the advertised fee under
+// either reading. Use this rather than comparing against applyMintFee: an
+// exact match is the best case, not the only compliant one.
+export const withinMintFeeBand = (grossMsat: number, netMsat: number, fee: MintFee): boolean => {
+  const {minNetMsat, maxNetMsat} = mintFeeBand(grossMsat, fee)
+  return netMsat >= minNetMsat && netMsat <= maxNetMsat
+}
+
 // The inverse: the SMALLEST invoice amount whose note nets `netMsat` after
 // the SERVICE's fee.
 //
