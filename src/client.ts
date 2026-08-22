@@ -10,8 +10,8 @@ import {
   classifyNoteError
 } from './errors.js'
 import {lnurlFetch, resolveOptions, type LnurlcashOptions} from './transport.js'
-import {hashK1} from './secrets.js'
-import {noteK1, withNewK1} from './note.js'
+import {hashK1, isPreimage} from './secrets.js'
+import {buildNoteUrl, noteK1, withNewK1} from './note.js'
 import {decodeBolt11AmountMsat} from './bolt11.js'
 import {parseMintFee, type MintFee} from './fees.js'
 
@@ -168,6 +168,14 @@ export type MintAddressInfo = {
   // otherwise invalidate every outstanding signature at once. Pass this
   // list alongside the current key to verifyNoteSignature.
   previousPubkeys?: string[]
+  // True when this SERVICE accepts an `h` on its LUD-06 pay callback and
+  // credits the minted note at that hash instead of at the payment
+  // preimage. This is the field to read BEFORE asking for an invoice: it
+  // is the difference between naming the note you are buying and buying a
+  // note whose secret the SERVICE, every routing node on the path and
+  // anyone who saw the invoice all learn. Undefined means the SERVICE said
+  // nothing, which is the same as no. See requestInvoice.
+  mintToHash?: boolean
 }
 
 const asString = (value: unknown): string | undefined =>
@@ -198,6 +206,9 @@ const asFees = (value: unknown): MintFee | undefined => {
   if (baseFeeMsat === undefined && feePpm === undefined) return undefined
   return {baseFeeMsat: baseFeeMsat ?? 0, feePpm: feePpm ?? 0}
 }
+
+const asBoolean = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined
 
 const asPubkeyList = (value: unknown): string[] | undefined =>
   Array.isArray(value) ? value.filter(item => typeof item === 'string') : undefined
@@ -254,7 +265,8 @@ export const fetchMintAddress = async (
     motd: asString(body.motd),
     fees: asFees(body.fees),
     version: asString(body.version),
-    previousPubkeys: asPubkeyList(body.previousPubkeys)
+    previousPubkeys: asPubkeyList(body.previousPubkeys),
+    mintToHash: asBoolean(body.mintToHash)
   }
 }
 
@@ -595,9 +607,11 @@ export type PayRequestInfo = {
   minSendable: number
   maxSendable: number
   metadata: string
-  // LUD-25: present when paying this mints a bearer note - the payment
-  // preimage of the invoice becomes a valid k1 at this raw LUD-17 withdraw
-  // endpoint
+  // LUD-25: present when paying this mints a bearer note. This is the raw
+  // LUD-17 withdraw endpoint the note lives at. By default the payment
+  // preimage of the invoice becomes its k1; where the SERVICE advertises
+  // mintToHash and the WALLET sent an `h`, the note is keyed by that hash
+  // instead and the preimage is not a valid k1 at all
   withdrawLink?: string
   // Rarely present here in practice: a WALLET that pays the invoice can
   // recover the SERVICE's node id from its own BOLT-11 signature, so the
@@ -631,15 +645,60 @@ export type InvoiceResult = {
   // once paid regardless. Per spec, absent MUST be read as true, so only an
   // explicit false counts.
   disposable: boolean
+  // The SERVICE confirmed on this quote that the note it mints will be
+  // keyed by the `h` that was sent, not by the payment preimage. False
+  // means it said nothing about `h`, which is NOT the same as a refusal:
+  // the advertisement a WALLET decides on is `mintToHash` on the mint
+  // address, read before asking, and a SERVICE is free to accept the
+  // parameter without echoing it back here. So treat this as a
+  // confirmation when it arrives, and claim by probing either way.
+  mintToHash: boolean
+}
+
+export type InvoiceRequestOptions = LnurlcashOptions & {
+  // Name the note you are buying. `h` is the sha256 of a secret the WALLET
+  // chose, exactly as `h` means on the withdraw callback, and a SERVICE
+  // that accepts it credits the minted note at `h` on settlement. The
+  // payment preimage is then no longer a valid k1 for that note.
+  //
+  // Why it matters: without `h` the preimage IS the money, and two sets of
+  // people learn it without being trusted - every routing node on the
+  // payment path, because that is how HTLC settlement works, and anyone
+  // who merely saw the invoice, because they can poll LUD-21 verify with
+  // its payment hash and take the preimage the moment it settles. A QR on
+  // a desktop screen is exactly that. Rotating the instant you claim is a
+  // race against a thief in a tight polling loop; choosing the secret
+  // yourself is not a race at all.
+  //
+  // Persist the secret BEFORE calling this. Paying for a note and then
+  // losing the secret is the one way this is worse than the preimage
+  // scheme, and persisting first removes it. Drawing it from
+  // deriveNoteSecret rather than a CSPRNG makes the note seed-derived from
+  // birth, so restoreNotes finds it without any rotate at all.
+  //
+  // Malformed input is refused here rather than sent, so a WALLET never
+  // pays for a quote a SERVICE was going to reject.
+  h?: string
 }
 
 export const requestInvoice = async (
   payCallback: string,
   amountMsat: number,
-  options: LnurlcashOptions = {}
+  options: InvoiceRequestOptions = {}
 ): Promise<InvoiceResult> => {
   const cbUrl = new URL(payCallback)
   cbUrl.searchParams.set('amount', String(amountMsat))
+  if (options.h !== undefined) {
+    if (!isPreimage(options.h)) {
+      throw new RequestRefusedError(
+        'An output hash must be 32 bytes of hex - no invoice was requested.'
+      )
+    }
+    // lowercase for the same reason a note's k1 is normalised: it is
+    // bytes, not text, and a SERVICE storing notes under the hash it was
+    // given should be given one spelling of it
+    cbUrl.searchParams.set('h', options.h.trim().toLowerCase())
+  }
   const body = await lnurlFetch(cbUrl, resolveOptions(options))
   if (typeof body?.pr !== 'string') {
     throw new ProtocolError('The service did not return an invoice.')
@@ -657,7 +716,8 @@ export const requestInvoice = async (
   return {
     pr: body.pr,
     verify: typeof body.verify === 'string' ? body.verify : undefined,
-    disposable: body.disposable !== false
+    disposable: body.disposable !== false,
+    mintToHash: body.mintToHash === true
   }
 }
 
@@ -677,6 +737,12 @@ export type VerifyResult = {
 // this and take the note the moment it settles. A caller that receives a
 // preimage here MUST rotate immediately, and must not treat verify as
 // having closed that exposure.
+//
+// That whole race only exists because the SERVICE chose the secret. A
+// WALLET that sent an `h` with requestInvoice chose its own, and claims
+// with claimMintedNote instead; verify is then an ordinary payment proof
+// that leaks nothing. Keep this path for mints that do not offer
+// mintToHash.
 export const fetchInvoiceVerification = async (
   verifyUrl: string,
   options: LnurlcashOptions = {}
@@ -689,5 +755,82 @@ export const fetchInvoiceVerification = async (
     settled: body.settled,
     preimage: typeof body.preimage === 'string' ? body.preimage : null,
     pr: body.pr
+  }
+}
+
+// ---- claiming a note you named yourself ----
+
+export type MintClaim = {
+  // 'minted'   the note exists at the WALLET's own secret. The invoice was
+  //            paid and the SERVICE credited it, so `amountMsat` and
+  //            `callback` are populated and there is nothing left to do.
+  // 'unminted' the SERVICE does not recognise the secret. Either the
+  //            invoice has not settled yet - poll again - or the SERVICE
+  //            ignored the `h` and keyed the note by the preimage after
+  //            all, in which case the LUD-21 verify path is the way in.
+  // 'pending'  the note exists with a melt in flight on it. Alive, value
+  //            unstated. Retry, never read this as spent.
+  // 'spent'    the note existed and is now burned. On a fresh mint that
+  //            means the secret was reused rather than freshly derived.
+  state: 'minted' | 'unminted' | 'pending' | 'spent'
+  k1: string
+  // What the SERVICE says the note is worth, in msat, and the callback to
+  // melt or rotate it at. Both null unless the state is 'minted'.
+  amountMsat: number | null
+  callback: string | null
+}
+
+// The claim half of naming the note you are buying. A WALLET that sent `h`
+// with requestInvoice already knows the secret, so there is nothing to
+// fetch from the SERVICE and no reason to poll LUD-21 verify: it simply
+// asks what the note at its own secret is worth, and a live answer is the
+// claim.
+//
+// `withdrawLink` is the raw LUD-17 or https withdraw endpoint the
+// payRequest advertised; `k1` is the secret whose hash was sent as `h`.
+//
+// No rotate follows, and that is the point. The preimage scheme needs one
+// because the SERVICE generated the secret and verify hands it to anyone
+// who saw the invoice; here the SERVICE never had it and no third party
+// can learn it, so the note is the WALLET's from the moment it exists.
+// This GET does disclose the secret to the SERVICE it is a claim on, which
+// is not the same exposure at all, and a caller who wants a signature on
+// the note can still rotate to get one.
+//
+// Poll this while the invoice is unpaid. Reads only: an 'unminted' answer
+// has changed nothing and can simply be asked again.
+export const claimMintedNote = async (
+  withdrawLink: string,
+  k1: string,
+  options: LnurlcashOptions = {}
+): Promise<MintClaim> => {
+  const secret = k1.trim().toLowerCase()
+  if (!isPreimage(secret)) {
+    throw new RequestRefusedError(
+      'A note secret must be 32 bytes of hex - nothing was sent.'
+    )
+  }
+  const blank: Omit<MintClaim, 'state'> = {
+    k1: secret,
+    amountMsat: null,
+    callback: null
+  }
+  try {
+    const info = await fetchNoteInfo(buildNoteUrl(withdrawLink, secret), options)
+    return {
+      state: 'minted',
+      k1: secret,
+      amountMsat: info.maxWithdrawable,
+      callback: info.callback
+    }
+  } catch (err) {
+    if (err instanceof PendingNoteError) return {...blank, state: 'pending'}
+    if (err instanceof NoteSpentError) return {...blank, state: 'spent'}
+    if (err instanceof NoteUnknownError) return {...blank, state: 'unminted'}
+    // The SERVICE unreachable, or answering with something that is not a
+    // withdrawRequest, says nothing about whether the note exists. Thrown
+    // rather than reported as 'unminted', which a caller would reasonably
+    // read as "not yet" and give up on.
+    throw err
   }
 }

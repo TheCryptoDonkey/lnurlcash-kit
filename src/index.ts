@@ -146,6 +146,7 @@ export {
   fetchPayRequest,
   requestInvoice,
   fetchInvoiceVerification,
+  claimMintedNote,
   type WithdrawRequestInfo,
   type MintAddressInfo,
   type MintContact,
@@ -158,6 +159,8 @@ export {
   type SettledNote,
   type PayRequestInfo,
   type InvoiceResult,
+  type InvoiceRequestOptions,
+  type MintClaim,
   type VerifyResult
 } from './client.js'
 
@@ -199,10 +202,15 @@ export const createClient = (options: LnurlcashOptions = {}) => ({
     signature?: string
   ) => client.settleNote(baseUrl, k1, expectedAmountMsat, signature, options),
   fetchPayRequest: (url: string) => client.fetchPayRequest(url, options),
-  requestInvoice: (payCallback: string, amountMsat: number) =>
-    client.requestInvoice(payCallback, amountMsat, options),
+  // `h` names the note the invoice will mint - see requestInvoice. The
+  // bound transport options are merged under it, so a caller can still
+  // reach for a one-off override.
+  requestInvoice: (payCallback: string, amountMsat: number, h?: string) =>
+    client.requestInvoice(payCallback, amountMsat, {...options, h}),
   fetchInvoiceVerification: (verifyUrl: string) =>
     client.fetchInvoiceVerification(verifyUrl, options),
+  claimMintedNote: (withdrawLink: string, k1: string) =>
+    client.claimMintedNote(withdrawLink, k1, options),
   restoreNotes: (
     baseUrl: string,
     root: Uint8Array,
