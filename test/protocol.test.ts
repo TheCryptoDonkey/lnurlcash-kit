@@ -73,6 +73,42 @@ describe('the informational GET', () => {
     expect((await fetchNoteInfo(noteUrl(m, k1))).maxWithdrawable).toBe(21000)
   })
 
+  // The way home. A note's informational response is all a bearer-note
+  // wallet may ever have of a mint, and it carries no link to the discovery
+  // document - which lives under a username the note never mentions. So a
+  // wallet that only ever received notes cannot reach the mint's retired
+  // signing keys, and an announced key rotation looks exactly like a
+  // substituted key. `payLink` is the reverse of `withdrawLink` and closes
+  // that.
+  it('carries the way home when the service publishes one', async () => {
+    const m = await mint()
+    const k1 = secret('0a')
+    m.state.creditNote(k1, 21000)
+
+    const info = await fetchNoteInfo(noteUrl(m, k1))
+    expect(info.payLink).toBe(`${m.url}/.well-known/lnurlp/mint`)
+  })
+
+  it('is silent about it when the service publishes none', async () => {
+    const m = await mint({noteInfoPayLink: false})
+    const k1 = secret('0b')
+    m.state.creditNote(k1, 21000)
+
+    expect((await fetchNoteInfo(noteUrl(m, k1))).payLink).toBeUndefined()
+  })
+
+  it('drops a way home that points at somebody else', async () => {
+    // A SERVICE nominating a THIRD party to vouch for its key history.
+    // Whoever controls the host controls the pin anyway, but that argument
+    // does not stretch to another origin, and refusing costs nothing.
+    const m = await mint({payLinkOffOrigin: true})
+    const k1 = secret('0c')
+    m.state.creditNote(k1, 21000)
+
+    const info = await fetchNoteInfo(noteUrl(m, k1))
+    expect(info.payLink).toBeUndefined()
+  })
+
   it('treats maxWithdrawable as authoritative over the URL\'s own claim', async () => {
     const m = await mint()
     const k1 = secret('02')

@@ -3,6 +3,23 @@
 Semantic versioning. While the LUD-25 draft is unmerged, `0.x` minor bumps
 may carry breaking changes; pin an exact version.
 
+## 0.2.1 - 2026-08-22
+
+- `WithdrawRequestInfo` carries `payLink`, the way home a SERVICE may
+  publish on a note's informational GET. It is the reverse of the
+  `withdrawLink` a payRequest advertises, and it is the only route a
+  bearer-note wallet has to a mint's discovery document: the document lives
+  under a username the note never mentions and cannot be guessed from the
+  callback. Without it, a WALLET that has only ever received notes cannot
+  read the mint's `previousPubkeys`, so an announced key rotation is
+  indistinguishable from a substituted key and gets refused.
+- A `payLink` on any origin but the note's own is dropped rather than
+  passed on, so a caller can treat its presence as the fact it looks like.
+  Whoever controls the host controls the pin anyway, which is TOFU's own
+  argument, but that argument does not stretch to letting a SERVICE
+  nominate a THIRD party to vouch for its key history, and refusing costs
+  nothing.
+
 ## 0.2.0 - 2026-08-22
 
 ### Deterministic note secrets and restore from a seed
