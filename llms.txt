@@ -34,12 +34,14 @@ fetchMintAddress(url, opts?) -> {mintPubkey?, payLink, name?, motd?, contact?,
   experimental, often absent
   mintPubkey verifies note signatures. It is NOT the node key in nodeUri.
   nodePubkey is a deprecated alias for mintPubkey, dropped next breaking change.
-  mintToHash true means the mint accepts an `h` on its pay callback - see 13.
+  mintToHash is the fallback copy of the payRequest's flag - see 13.
 deriveNoteRoot(seedBytes) -> Uint8Array    HMAC-SHA256("lnurlcash-note-v1", seed)
 deriveNoteSecret(root, host, index) -> k1  HMAC-SHA256(root, host + ":" + index)
 derivedSecretSource(root, host, start) -> RandomSecret & {index()}
 restoreNotes(baseUrl, root, host, {gap?, start?}, opts?) -> {found[], next}
-fetchPayRequest(url, opts?) / fetchInvoiceVerification(url, opts?)
+fetchPayRequest(url, opts?) -> {callback, minSendable, maxSendable, metadata,
+  withdrawLink?, mintFee?, mintToHash?}     mintToHash: mint accepts an `h`
+fetchInvoiceVerification(url, opts?)
 requestInvoice(cb, msat, {h?, ...opts}?) -> {pr, verify?, disposable, mintToHash}
 claimMintedNote(withdrawLink, k1, opts?)
   -> {state: 'minted'|'unminted'|'pending'|'spent', k1, amountMsat, callback}
@@ -93,13 +95,17 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
     next unused one. Bumping late re-derives a secret the mint has already
     seen.
 13. Name the note you are buying where the mint offers it. Read mintToHash
-    off fetchMintAddress FIRST, then derive a secret, persist it, and pass
-    h = hashK1(secret) to requestInvoice. The mint credits the note at that
-    hash, the payment preimage is then not a valid k1, and you claim with
-    claimMintedNote rather than polling verify - no rotate needed, and the
-    note is seed-derived from birth so restoreNotes finds it. Persist the
-    secret BEFORE requesting the invoice. A mint that does not advertise it
-    ignores the h and the preimage path is unchanged.
+    off fetchPayRequest FIRST (fetchMintAddress is the fallback for a mint
+    that only says it on that optional document), then derive a secret,
+    persist it, and pass h = hashK1(secret) to requestInvoice. The mint
+    credits the note at that hash, the payment preimage is then not a valid
+    k1, and you claim with claimMintedNote rather than polling verify - no
+    rotate needed, and the note is seed-derived from birth so restoreNotes
+    finds it. Persist the secret BEFORE requesting the invoice. Three
+    places carry the flag: the payRequest and the mint address both mean
+    "I accept an h", InvoiceResult.mintToHash means "I bound THIS quote to
+    your hash". Anything not exactly true is no. A mint that advertises
+    nowhere ignores the h and the preimage path is unchanged.
 
 ## Error classes
 

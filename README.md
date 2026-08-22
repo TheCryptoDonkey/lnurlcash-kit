@@ -303,18 +303,17 @@ nobody else ever had it, and the preimage is an ordinary payment proof.
 
 ```ts
 import {
-  fetchMintAddress, fetchPayRequest, requestInvoice, claimMintedNote,
+  fetchPayRequest, requestInvoice, claimMintedNote,
   deriveNoteRoot, deriveNoteSecret, hashK1
 } from 'lnurlcash-kit'
 
-const address = await fetchMintAddress(addressUrl)
-if (!address.mintToHash) { /* preimage path, rotate on claim */ }
+const pay = await fetchPayRequest(payUrl)      // a Lightning Address resolves here
+if (!pay.mintToHash) { /* preimage path, rotate on claim */ }
 
 const root = deriveNoteRoot(seed)
 const k1 = deriveNoteSecret(root, 'mint.example', nextIndex)
-await persist({k1, index: nextIndex})        // BEFORE the invoice. always.
+await persist({k1, index: nextIndex})          // BEFORE the invoice. always.
 
-const pay = await fetchPayRequest(address.payLink)
 const {pr} = await requestInvoice(pay.callback, 21_000, {h: hashK1(k1)})
 
 // pay `pr`, then poll. No verify, because you already know the secret.
@@ -323,13 +322,26 @@ const claim = await claimMintedNote(pay.withdrawLink!, k1)
 // 'minted'   -> claim.amountMsat is what it is worth, claim.callback melts it
 ```
 
-Ask the mint address first. `mintToHash` is how a mint says it accepts the
-parameter, and reading it before you ask is the difference between naming
-your own note and paying for one whose secret three other parties can learn.
-A mint that says nothing ignores the `h`, keys the note by the preimage as it
-always has, and the verify path above is unchanged; `InvoiceResult.mintToHash`
-is the same field where a mint chooses to confirm the binding on the quote,
-and `false` there is silence rather than a refusal.
+Ask before you buy. `mintToHash` is how a mint says it accepts the parameter,
+and reading it first is the difference between naming your own note and paying
+for one whose secret three other parties can learn. It turns up in three
+places, saying three different things:
+
+| Where | What it means |
+| --- | --- |
+| `PayRequestInfo.mintToHash` | "I accept an `h`." **Decide from this one.** |
+| `MintAddressInfo.mintToHash` | the same fact on the experimental discovery document |
+| `InvoiceResult.mintToHash` | "I bound *this quote* to the hash you named" |
+
+Prefer the payRequest: it is the only endpoint every mint has, it is where
+your wallet already is when it is about to mint, and it sits next to the
+`withdrawLink` the draft already hangs there for LNURLcash's sake. Fall back
+to `fetchMintAddress` for a mint that only advertises on that document. A mint
+that says it in neither place ignores the `h`, keys the note by the preimage
+as it always has, and the verify path is unchanged. Anything that is not
+exactly `true` is a no, everywhere, and `false` on the invoice result is
+silence rather than a refusal, so decide from the advertisement and claim by
+probing.
 
 **Persist the secret before you ask for the invoice.** Paying for a note and
 then losing the secret is the one way this is worse than the preimage scheme,

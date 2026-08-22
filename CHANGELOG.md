@@ -95,16 +95,25 @@ may carry breaking changes; pin an exact version.
   settles. A QR on a desktop screen is exactly that. "Rotate immediately"
   is a race against a thief in a tight polling loop with a warm connection.
   Choosing the secret yourself is not a race at all.
-- `MintAddressInfo.mintToHash` carries what the mint advertises on its
-  discovery document. Read it BEFORE asking for an invoice: it is the
-  difference between naming your own note and buying one whose secret three
-  other parties can learn. Undefined means the mint said nothing, which a
-  wallet should read as no.
-- `InvoiceResult.mintToHash` is the same field where a mint chooses to
-  confirm the binding on the quote itself. `false` means the quote said
-  nothing about `h`, which is not a refusal: the advertisement a wallet
-  decides on is the one on the mint address, and a mint may accept the
-  parameter without echoing it back.
+- The capability appears in three places, and they say different things.
+  `PayRequestInfo.mintToHash` is "I accept an `h`", and is the one to
+  decide from: the payRequest is the only endpoint every mint has, it is
+  where a wallet already is at the moment it is about to mint, and it sits
+  alongside the `withdrawLink` the draft already hangs there for
+  LNURLcash's sake. `MintAddressInfo.mintToHash` is the same statement on
+  the experimental discovery document, kept for consistency with the other
+  capability fields there and the fallback for a mint that only says it
+  there. `InvoiceResult.mintToHash` is "I bound THIS quote to the hash you
+  named": per quote, and the one that matters at the moment money moves.
+- So the order is: read the payRequest, fall back to the mint address, and
+  a mint that advertises in neither place ignores the `h`. Undefined means
+  the mint said nothing, which a wallet reads as no. Anything that is not
+  exactly the boolean `true` is no, everywhere, which matters on the
+  payRequest because that response is spread through and a truthy string
+  would otherwise land on the typed field.
+- `InvoiceResult.mintToHash` being `false` is not a refusal: it means the
+  quote said nothing about `h`, and a mint may accept the parameter without
+  echoing it back. Decide from the advertisement, claim by probing.
 - A malformed `h` is refused with `RequestRefusedError` before anything is
   sent, so a wallet never pays for a quote the mint was always going to
   reject. The hash is normalised to lowercase on the way out.
