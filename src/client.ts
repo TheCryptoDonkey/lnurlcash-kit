@@ -25,6 +25,20 @@ export type WithdrawRequestInfo = {
   maxWithdrawable: number
   defaultDescription?: string
   mintPubkey?: string
+  // The way home. A payRequest advertises `withdrawLink`; this is the other
+  // direction, so a holder who has nothing but a note can still reach the
+  // document publishing this SERVICE's terms and its retired signing keys.
+  //
+  // Without it, a WALLET that only ever received notes cannot tell an
+  // announced key rotation from a substituted key: the discovery document
+  // lives under a username the note never mentions, so it cannot be guessed
+  // from the callback.
+  //
+  // Only ever accepted on the note's own origin. Whoever controls the host
+  // controls the pin anyway, which is TOFU's own argument, but a payLink
+  // pointing somewhere else would let a SERVICE nominate a THIRD party to
+  // vouch for its key history, and refusing that costs nothing.
+  payLink?: string
 }
 
 // LUD-03 step one. Never burns, rotates or alters the note. maxWithdrawable
@@ -75,7 +89,28 @@ export const fetchNoteInfo = async (
       "The service echoed back a different k1 than was queried - the note may have been redeemed elsewhere, or the service isn't spec-compliant."
     )
   }
-  return body as WithdrawRequestInfo
+  // Dropped rather than passed on if it is not a URL on this note's own
+  // origin, so a caller can treat its presence as the fact it looks like.
+  const info = body as WithdrawRequestInfo
+  const payLink = sameOriginPayLink(body.payLink, reqUrl)
+  if (payLink === undefined) delete info.payLink
+  else info.payLink = payLink
+  return info
+}
+
+// A `payLink` is only meaningful, and only safe, on the origin the note
+// itself lives on. Anything else is discarded silently: it is an optional
+// field, and a WALLET that never sees it simply behaves as it did before.
+const sameOriginPayLink = (value: unknown, noteUrl: URL): string | undefined => {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  let candidate: URL
+  try {
+    candidate = new URL(value, noteUrl)
+  } catch {
+    return undefined
+  }
+  if (candidate.origin !== noteUrl.origin) return undefined
+  return candidate.toString()
 }
 
 // After an AmbiguousMutationError: did the burn actually happen? Probes one
