@@ -48,7 +48,9 @@ may carry breaking changes; pin an exact version.
   `LnurlcashOptions.randomSecret` and rotate, split and merge draw derived
   secrets without knowing anything about derivation; `source.index()` reads
   back the next unused index afterwards. A rotate consumes one index, a
-  split consumes two. Persist that counter in the SAME write that stages
+  split consumes two. Minting can draw from the same source where the mint
+  advertises `mintToHash` - see "Name the note you are buying" below - and
+  the note is then derived from birth rather than from its first rotate. Persist that counter in the SAME write that stages
   the new records, and do it BEFORE the hash goes on the wire: a crash
   between the bump and the request wastes an index, which costs nothing,
   while a crash the other way round re-derives a secret the mint has
@@ -75,6 +77,71 @@ may carry breaking changes; pin an exact version.
   melt in flight raised a bare `ServiceRejectedError` that callers had to
   re-parse. `PendingNoteError` extends `ServiceRejectedError`, so anything
   catching the parent is unaffected.
+
+### Name the note you are buying
+
+- `requestInvoice(payCallback, amountMsat, {h, ...opts})` takes an optional
+  `h`: the sha256 of a secret the wallet chose, sent on the LUD-06 pay
+  callback exactly as `h` is sent on the withdraw callback. A mint that
+  accepts it credits the minted note at that hash on settlement, so the
+  wallet names the note it is buying instead of being handed one. The
+  options argument is the same object as before with one more optional
+  field on it, so every existing call is unaffected.
+- Why it matters. Without `h` the payment preimage IS the money, and two
+  sets of people learn it without being trusted: every routing node on the
+  payment path, because that is how HTLC settlement works, and anyone who
+  merely saw the invoice, because they can poll LUD-21 `verify` with the
+  payment hash that travels inside it and take the preimage the moment it
+  settles. A QR on a desktop screen is exactly that. "Rotate immediately"
+  is a race against a thief in a tight polling loop with a warm connection.
+  Choosing the secret yourself is not a race at all.
+- `MintAddressInfo.mintToHash` carries what the mint advertises on its
+  discovery document. Read it BEFORE asking for an invoice: it is the
+  difference between naming your own note and buying one whose secret three
+  other parties can learn. Undefined means the mint said nothing, which a
+  wallet should read as no.
+- `InvoiceResult.mintToHash` is the same field where a mint chooses to
+  confirm the binding on the quote itself. `false` means the quote said
+  nothing about `h`, which is not a refusal: the advertisement a wallet
+  decides on is the one on the mint address, and a mint may accept the
+  parameter without echoing it back.
+- A malformed `h` is refused with `RequestRefusedError` before anything is
+  sent, so a wallet never pays for a quote the mint was always going to
+  reject. The hash is normalised to lowercase on the way out.
+- Persist the secret BEFORE calling `requestInvoice`. Paying for a note and
+  then losing the secret is the one way this is worse than the preimage
+  scheme, and persisting first removes it.
+- `claimMintedNote(withdrawLink, k1, opts)` is the claim half, returning
+  `{state, k1, amountMsat, callback}` with `state` one of `'minted'`,
+  `'unminted'`, `'pending'` or `'spent'`. A wallet that chose its own
+  secret has nothing to fetch, so it asks the mint what the note at that
+  secret is worth and a live answer is the claim. Poll it while the invoice
+  is unpaid; it reads only, so an `'unminted'` answer has changed nothing.
+  A mint that cannot be reached throws rather than reporting `'unminted'`,
+  which a caller would fairly read as "not yet" and give up on.
+- No rotate follows a bound claim, and that is the point. The preimage
+  scheme needs one because the mint generated the secret and `verify` hands
+  it to anyone who saw the invoice. Here the mint never had it and no third
+  party can learn it, so the note belongs to the wallet from the moment it
+  exists. The claim GET does disclose the secret to the mint it is a claim
+  on, which is not the same exposure, and a wallet that wants an offline
+  signature on the note can still rotate to get one.
+- **This changes what the derivation section above says about minting.**
+  Until now a freshly minted note was never derived: its secret was the
+  mint's preimage, which nothing in a seed produces, so the note existed
+  outside the wallet's derivation until the immediate rotate moved it back
+  in. Draw the secret from `deriveNoteSecret` at the next index, send its
+  hash as `h`, and the minted note is seed-derived from birth. `restoreNotes`
+  finds it with no rotate having happened at all, which is what closes the
+  window where a wallet that crashed between paying and rotating could not
+  recover the note from its words. The counter rule is unchanged and applies
+  to the mint too: persist the bumped index in the same write that stages the
+  pending mint, before the hash goes on the wire.
+- Purely additive on the wire. A mint that does not offer `mintToHash`
+  ignores the parameter, keys the note by the preimage as it always has,
+  and the LUD-21 verify path is unchanged and still the way in.
+- `createClient(opts).requestInvoice(payCallback, amountMsat, h?)` takes the
+  hash as a third argument, and `claimMintedNote` is bound alongside it.
 
 ### Mint info, and verifying against a key history
 

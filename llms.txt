@@ -30,14 +30,19 @@ probeBurnedNote(url, opts?) -> 'live' | 'gone' | 'unknown'
 verifyNoteSignature(k1, amountMsat, sigHex, pubkeyHex | pubkeyHex[]) -> boolean
 verifyNoteSignatureAgainst(k1, amountMsat, sigHex, keys) -> {valid, pubkey}
 fetchMintAddress(url, opts?) -> {mintPubkey?, payLink, name?, motd?, contact?,
-  tosUrl?, fees?, version?, previousPubkeys?, node*?}  experimental, often absent
+  tosUrl?, fees?, version?, previousPubkeys?, mintToHash?, node*?}
+  experimental, often absent
   mintPubkey verifies note signatures. It is NOT the node key in nodeUri.
   nodePubkey is a deprecated alias for mintPubkey, dropped next breaking change.
+  mintToHash true means the mint accepts an `h` on its pay callback - see 13.
 deriveNoteRoot(seedBytes) -> Uint8Array    HMAC-SHA256("lnurlcash-note-v1", seed)
 deriveNoteSecret(root, host, index) -> k1  HMAC-SHA256(root, host + ":" + index)
 derivedSecretSource(root, host, start) -> RandomSecret & {index()}
 restoreNotes(baseUrl, root, host, {gap?, start?}, opts?) -> {found[], next}
-fetchPayRequest(url, opts?) / requestInvoice(cb, msat, opts?) / fetchInvoiceVerification(url, opts?)
+fetchPayRequest(url, opts?) / fetchInvoiceVerification(url, opts?)
+requestInvoice(cb, msat, {h?, ...opts}?) -> {pr, verify?, disposable, mintToHash}
+claimMintedNote(withdrawLink, k1, opts?)
+  -> {state: 'minted'|'unminted'|'pending'|'spent', k1, amountMsat, callback}
 encodePaymentRequest(req) -> "lnurlcashreq1..."  base64url(JCS JSON), prefix
 decodePaymentRequest(str, {now?}) -> PaymentRequest  throws ProtocolError
 isPaymentRequest(str) -> boolean       true for an expired one too
@@ -65,6 +70,7 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
    spent.
 6. Rotate immediately after claiming a minted note: the mint generated that
    preimage, and LUD-21 verify exposes it to anyone who saw the invoice.
+   Does not apply to a note minted with `h` - see 13.
 7. Never log note URLs. The secret is in the query string.
 8. Never branch on error message text. Branch on the error class.
 9. lnurlcashreq1 means ONE schema: {v: 1, id (16 hex), amount (whole sat as
@@ -86,6 +92,14 @@ Options (always last): {fetch?, timeoutMs?, offline?, randomSecret?}
     split consumes two indices, a rotate one; read source.index() for the
     next unused one. Bumping late re-derives a secret the mint has already
     seen.
+13. Name the note you are buying where the mint offers it. Read mintToHash
+    off fetchMintAddress FIRST, then derive a secret, persist it, and pass
+    h = hashK1(secret) to requestInvoice. The mint credits the note at that
+    hash, the payment preimage is then not a valid k1, and you claim with
+    claimMintedNote rather than polling verify - no rotate needed, and the
+    note is seed-derived from birth so restoreNotes finds it. Persist the
+    secret BEFORE requesting the invoice. A mint that does not advertise it
+    ignores the h and the preimage path is unchanged.
 
 ## Error classes
 

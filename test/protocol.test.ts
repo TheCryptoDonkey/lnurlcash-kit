@@ -12,6 +12,7 @@ import {
   AmbiguousMintError,
   AmbiguousMutationError,
   buildNoteUrl,
+  claimMintedNote,
   deriveNoteRoot,
   deriveNoteSecret,
   derivedSecretSource,
@@ -34,6 +35,7 @@ import {
   restoreNotes,
   rotateNote,
   ServiceRejectedError,
+  serverOf,
   settleNote,
   splitNote,
   verifyNoteSignature,
@@ -438,6 +440,210 @@ describe('minting', () => {
     await expect(requestInvoice(pay.callback, 21000)).rejects.toBeInstanceOf(
       ServiceRejectedError
     )
+  })
+})
+
+describe('naming the note you are buying', () => {
+  // A binding mint credits the note at the `h` the WALLET sent instead of
+  // at the payment preimage. The published mock does not implement that
+  // knob yet, so the mint half is spied here: what is under test is the
+  // WALLET's side of the same wire contract.
+  const spying = (
+    seen: string[],
+    body: (parsed: any, url: URL) => any = parsed => parsed
+  ): typeof fetch =>
+    async (input, init) => {
+      const url = new URL(String(input))
+      seen.push(url.toString())
+      const res = await fetch(String(input), init)
+      const parsed = await res.json()
+      return new Response(JSON.stringify(body(parsed, url)), {
+        headers: {'content-type': 'application/json'}
+      })
+    }
+
+  const refusingFetch: typeof fetch = async () => {
+    throw new Error('nothing should have been sent')
+  }
+
+  it('puts the wallet\'s own output hash on the pay callback', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    const k1 = secret('60')
+    const seen: string[] = []
+
+    await requestInvoice(pay.callback, 21000, {h: hashK1(k1), fetch: spying(seen)})
+
+    const sent = new URL(seen.at(-1)!)
+    expect(sent.searchParams.get('h')).toBe(hashK1(k1))
+    expect(sent.searchParams.get('amount')).toBe('21000')
+  })
+
+  it('sends no h at all when none is given, so the preimage path is unchanged', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    const seen: string[] = []
+
+    const invoice = await requestInvoice(pay.callback, 21000, {fetch: spying(seen)})
+
+    expect(new URL(seen.at(-1)!).searchParams.has('h')).toBe(false)
+    expect(invoice.pr).toMatch(/^lnbc/)
+    expect(invoice.mintToHash).toBe(false)
+  })
+
+  it('normalises the output hash to lowercase before sending it', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    const k1 = secret('61')
+    const seen: string[] = []
+
+    await requestInvoice(pay.callback, 21000, {
+      h: hashK1(k1).toUpperCase(),
+      fetch: spying(seen)
+    })
+
+    expect(new URL(seen.at(-1)!).searchParams.get('h')).toBe(hashK1(k1))
+  })
+
+  it('refuses a malformed output hash before anything is sent', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+
+    // A wallet that pays for a quote the mint was always going to reject
+    // has burned an invoice for nothing, so this is refused on this side.
+    for (const h of ['', 'not-hex', hashK1(secret('62')).slice(0, 63), 'zz'.repeat(32)]) {
+      await expect(
+        requestInvoice(pay.callback, 21000, {h, fetch: refusingFetch})
+      ).rejects.toBeInstanceOf(RequestRefusedError)
+    }
+  })
+
+  it('reports the binding when the mint confirms it on the quote', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    const seen: string[] = []
+
+    const invoice = await requestInvoice(pay.callback, 21000, {
+      h: hashK1(secret('63')),
+      fetch: spying(seen, parsed => ({...parsed, mintToHash: true}))
+    })
+
+    expect(invoice.mintToHash).toBe(true)
+    expect(invoice.disposable).toBe(false)
+  })
+
+  it('reads mintToHash from the mint address, which is where a wallet asks first', async () => {
+    const m = await mint()
+    const advertised = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
+      fetch: spying([], parsed => ({...parsed, mintToHash: true}))
+    })
+    expect(advertised.mintToHash).toBe(true)
+
+    // silence is not a refusal on the wire, but a wallet reads it as one
+    const silent = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`)
+    expect(silent.mintToHash).toBeUndefined()
+
+    const refused = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
+      fetch: spying([], parsed => ({...parsed, mintToHash: false}))
+    })
+    expect(refused.mintToHash).toBe(false)
+  })
+
+  it('claims the note at the wallet\'s own secret, with no verify poll', async () => {
+    const m = await mint()
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    const withdrawLink = pay.withdrawLink!
+
+    // the secret is drawn from the seed and persisted BEFORE the invoice is
+    // asked for: paying and then losing it is the one way this is worse
+    const root = deriveNoteRoot(hexToBytes('11'.repeat(32)))
+    const k1 = deriveNoteSecret(root, serverOf(m.url), 0)
+
+    const invoice = await requestInvoice(pay.callback, 21000, {
+      h: hashK1(k1),
+      fetch: spying([], parsed => ({...parsed, mintToHash: true}))
+    })
+    expect(invoice.mintToHash).toBe(true)
+
+    // unpaid: the mint has an invoice bound to the hash and no note yet
+    expect((await claimMintedNote(withdrawLink, k1)).state).toBe('unminted')
+
+    // settlement, as a binding mint performs it: the note appears at `h`
+    m.state.creditNote(k1, 21000)
+
+    const claim = await claimMintedNote(withdrawLink, k1)
+    expect(claim.state).toBe('minted')
+    expect(claim.amountMsat).toBe(21000)
+    expect(claim.k1).toBe(k1)
+    expect(claim.callback).toBe(`${m.url}/w/cb`)
+    // nothing was rotated, and the note is still outstanding and spendable
+    expect(m.state.noteState(k1)).toBe('outstanding')
+
+    // and the payment preimage names nothing: it is an ordinary payment
+    // proof now, so anyone who saw the invoice and polled verify has it and
+    // can do precisely nothing with it
+    const paymentHash = [...m.state.invoices.keys()].at(-1)!
+    const preimage = m.state.invoices.get(paymentHash)!.preimage
+    expect(preimage).not.toBe(k1)
+    expect((await claimMintedNote(withdrawLink, preimage)).state).toBe('unminted')
+  })
+
+  it('restore finds a note minted this way, without any rotate at all', async () => {
+    const m = await mint()
+    const host = serverOf(m.url)
+    const root = deriveNoteRoot(hexToBytes('22'.repeat(32)))
+    // the wallet named index 0 as the output of its mint, and the mint
+    // credited it there. A preimage-keyed mint would have minted at a
+    // secret nothing derives, leaving the note lost until a rotate.
+    m.state.creditNote(deriveNoteSecret(root, host, 0), 21000)
+
+    const {found, next} = await restoreNotes(`${m.url}/w`, root, host)
+    expect(found).toEqual([
+      {index: 0, k1: deriveNoteSecret(root, host, 0), amountMsat: 21000, state: 'live'}
+    ])
+    expect(next).toBe(1)
+  })
+
+  it('separates a burned note and one mid-melt from one not yet minted', async () => {
+    const m = await mint()
+    const withdrawLink = `${m.url}/w`
+
+    const burned = secret('64')
+    m.state.creditNote(burned, 21000)
+    const info = await fetchNoteInfo(noteUrl(m, burned))
+    await rotateNote(info.callback, burned)
+    expect((await claimMintedNote(withdrawLink, burned)).state).toBe('spent')
+
+    // 'pending' is the one reason string LUD-25 fixes verbatim, and the
+    // mock's informational GET does not emit it, so it is stubbed here
+    const melting = secret('65')
+    const pending = await claimMintedNote(withdrawLink, melting, {
+      fetch: async () =>
+        new Response(JSON.stringify({status: 'ERROR', reason: 'pending'}), {
+          headers: {'content-type': 'application/json'}
+        })
+    })
+    expect(pending.state).toBe('pending')
+    expect(pending.amountMsat).toBe(null)
+    expect(pending.callback).toBe(null)
+
+    expect((await claimMintedNote(withdrawLink, secret('66'))).state).toBe('unminted')
+  })
+
+  it('refuses to probe a malformed secret', async () => {
+    const m = await mint()
+    await expect(
+      claimMintedNote(`${m.url}/w`, 'not-a-secret', {fetch: refusingFetch})
+    ).rejects.toBeInstanceOf(RequestRefusedError)
+  })
+
+  it('throws rather than reporting "not yet" when the mint cannot be reached', async () => {
+    const m = await mint()
+    // 'unminted' is a claim about the mint's records. A failed request is
+    // not one, and a caller polling would read it as one and give up.
+    await expect(
+      claimMintedNote(`${m.url}/w`, secret('67'), {offline: true})
+    ).rejects.toBeInstanceOf(RequestRefusedError)
   })
 })
 

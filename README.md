@@ -161,6 +161,12 @@ who saw the unpaid invoice can poll for it — the payment hash travels inside
 the invoice. First rotater wins. A wallet that rotates on settlement wins by
 construction; a human copying a preimage by hand does not.
 
+That is a race, and the way to win a race is not to enter it. Where a mint
+advertises `mintToHash`, name the note you are buying and the preimage is
+not its secret at all: see
+[Minting a note you named yourself](#minting-a-note-you-named-yourself).
+The rule above stands for every mint that does not offer it.
+
 ## Offline verification
 
 A service may sign each note with its Lightning node identity key, so a
@@ -280,6 +286,65 @@ gets the signature in the same call.
 
 The seed is bearer material for every note the wallet will ever hold. Store
 it the way you store the notes, and never log it.
+
+## Minting a note you named yourself
+
+By default the secret of a freshly minted note is the invoice's payment
+preimage, which means the money is a thing two sets of people learn without
+being trusted. Every routing node on the payment path sees it, because that
+is how HTLC settlement works. And anyone who merely saw the unpaid invoice
+can poll LUD-21 `verify` with the payment hash inside it and take the
+preimage the moment it settles, which is what a QR code on a desktop screen
+hands out.
+
+A mint can instead bind the note to a hash you supply, the same `h` you
+already send on every rotate, split and merge. Then you chose the secret,
+nobody else ever had it, and the preimage is an ordinary payment proof.
+
+```ts
+import {
+  fetchMintAddress, fetchPayRequest, requestInvoice, claimMintedNote,
+  deriveNoteRoot, deriveNoteSecret, hashK1
+} from 'lnurlcash-kit'
+
+const address = await fetchMintAddress(addressUrl)
+if (!address.mintToHash) { /* preimage path, rotate on claim */ }
+
+const root = deriveNoteRoot(seed)
+const k1 = deriveNoteSecret(root, 'mint.example', nextIndex)
+await persist({k1, index: nextIndex})        // BEFORE the invoice. always.
+
+const pay = await fetchPayRequest(address.payLink)
+const {pr} = await requestInvoice(pay.callback, 21_000, {h: hashK1(k1)})
+
+// pay `pr`, then poll. No verify, because you already know the secret.
+const claim = await claimMintedNote(pay.withdrawLink!, k1)
+// 'unminted' -> not settled yet, ask again
+// 'minted'   -> claim.amountMsat is what it is worth, claim.callback melts it
+```
+
+Ask the mint address first. `mintToHash` is how a mint says it accepts the
+parameter, and reading it before you ask is the difference between naming
+your own note and paying for one whose secret three other parties can learn.
+A mint that says nothing ignores the `h`, keys the note by the preimage as it
+always has, and the verify path above is unchanged; `InvoiceResult.mintToHash`
+is the same field where a mint chooses to confirm the binding on the quote,
+and `false` there is silence rather than a refusal.
+
+**Persist the secret before you ask for the invoice.** Paying for a note and
+then losing the secret is the one way this is worse than the preimage scheme,
+and persisting first removes it. Derive it rather than drawing it at random
+and there is a second reason: the note is then seed-derived *from birth*, so
+`restoreNotes` finds it without any rotate having happened. Under the preimage
+scheme a minted note lives outside your derivation until the immediate rotate
+pulls it in, and a wallet that crashes in that window cannot recover the note
+from its words.
+
+No rotate follows a bound claim. The preimage scheme needs one because the
+mint made the secret and hands it out; here the mint never had it, so the note
+is yours from the moment it exists. The claim GET does show the secret to the
+mint it is a claim on, which is a different thing from showing it to whoever
+scanned the QR, and you can still rotate if you want the offline signature.
 
 ## Asking to be paid
 
