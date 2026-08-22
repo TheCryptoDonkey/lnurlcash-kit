@@ -532,7 +532,47 @@ describe('naming the note you are buying', () => {
     expect(invoice.disposable).toBe(false)
   })
 
-  it('reads mintToHash from the mint address, which is where a wallet asks first', async () => {
+  it('reads mintToHash from the payRequest, which is where a wallet asks first', async () => {
+    const m = await mint()
+    const url = `${m.url}/.well-known/lnurlp/mint`
+
+    // The payRequest is the one endpoint every mint has, and where a wallet
+    // already is when it is about to mint. Asking the optional discovery
+    // document first would be a round trip for a fact it could be told here.
+    const advertised = await fetchPayRequest(url, {
+      fetch: spying([], parsed => ({...parsed, mintToHash: true}))
+    })
+    expect(advertised.mintToHash).toBe(true)
+    // and it sits alongside the withdrawLink it is about
+    expect(advertised.withdrawLink).toBeTruthy()
+
+    const silent = await fetchPayRequest(url)
+    expect(silent.mintToHash).toBeUndefined()
+
+    const refused = await fetchPayRequest(url, {
+      fetch: spying([], parsed => ({...parsed, mintToHash: false}))
+    })
+    expect(refused.mintToHash).toBe(false)
+  })
+
+  it('reads anything that is not exactly true as no, on either document', async () => {
+    const m = await mint()
+    // The response is spread through on the payRequest, so a truthy string
+    // would otherwise land on the typed field and read as a capability.
+    for (const value of ['true', 1, 'yes', {}, [], null]) {
+      const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`, {
+        fetch: spying([], parsed => ({...parsed, mintToHash: value}))
+      })
+      expect(pay.mintToHash).toBeUndefined()
+
+      const address = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
+        fetch: spying([], parsed => ({...parsed, mintToHash: value}))
+      })
+      expect(address.mintToHash).toBeUndefined()
+    }
+  })
+
+  it('falls back to the mint address for a mint that only says it there', async () => {
     const m = await mint()
     const advertised = await fetchMintAddress(`${m.url}/.well-known/lnurlw/mint`, {
       fetch: spying([], parsed => ({...parsed, mintToHash: true}))
@@ -551,7 +591,12 @@ describe('naming the note you are buying', () => {
 
   it('claims the note at the wallet\'s own secret, with no verify poll', async () => {
     const m = await mint()
-    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`)
+    // the whole flow, in the order a wallet performs it: the payRequest
+    // says the mint accepts an `h`, so the wallet names its own note
+    const pay = await fetchPayRequest(`${m.url}/.well-known/lnurlp/mint`, {
+      fetch: spying([], parsed => ({...parsed, mintToHash: true}))
+    })
+    expect(pay.mintToHash).toBe(true)
     const withdrawLink = pay.withdrawLink!
 
     // the secret is drawn from the seed and persisted BEFORE the invoice is

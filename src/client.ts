@@ -170,11 +170,11 @@ export type MintAddressInfo = {
   previousPubkeys?: string[]
   // True when this SERVICE accepts an `h` on its LUD-06 pay callback and
   // credits the minted note at that hash instead of at the payment
-  // preimage. This is the field to read BEFORE asking for an invoice: it
-  // is the difference between naming the note you are buying and buying a
-  // note whose secret the SERVICE, every routing node on the path and
-  // anyone who saw the invoice all learn. Undefined means the SERVICE said
-  // nothing, which is the same as no. See requestInvoice.
+  // preimage. The same fact PayRequestInfo carries, kept here alongside the
+  // other capability fields; prefer the payRequest, which every mint has,
+  // and fall back to this document for a SERVICE that only says it here.
+  // Undefined means the SERVICE said nothing, which is the same as no. See
+  // requestInvoice.
   mintToHash?: boolean
 }
 
@@ -621,6 +621,16 @@ export type PayRequestInfo = {
   // parsed from metadata - absent means the SERVICE advertised none, which
   // the spec says to read as fee-free rather than unknown
   mintFee?: MintFee
+  // True when this SERVICE accepts an `h` on its pay callback and credits
+  // the minted note at that hash instead of at the payment preimage. This
+  // is THE place to read the capability: the payRequest is the one endpoint
+  // every mint has, it is where a WALLET already is at the moment it is
+  // about to mint, and it sits alongside withdrawLink, which the draft
+  // already hangs here for LNURLcash's sake. The same field on
+  // MintAddressInfo says the same thing and is the fallback for a SERVICE
+  // that only advertises there. Undefined means the SERVICE said nothing,
+  // which is the same as no. See requestInvoice.
+  mintToHash?: boolean
 }
 
 export const fetchPayRequest = async (
@@ -633,7 +643,15 @@ export const fetchPayRequest = async (
   }
   const mintFee =
     typeof body.metadata === 'string' ? parseMintFee(body.metadata) : null
-  return {...body, mintFee: mintFee ?? undefined} as PayRequestInfo
+  // The spread is how this one has always been built, so a field a SERVICE
+  // adds still rides through untyped. mintToHash is mapped explicitly after
+  // it, because anything that is not exactly the boolean true has to read
+  // as no rather than as a truthy string.
+  return {
+    ...body,
+    mintFee: mintFee ?? undefined,
+    mintToHash: asBoolean(body.mintToHash)
+  } as PayRequestInfo
 }
 
 export type InvoiceResult = {
@@ -645,11 +663,14 @@ export type InvoiceResult = {
   // once paid regardless. Per spec, absent MUST be read as true, so only an
   // explicit false counts.
   disposable: boolean
-  // The SERVICE confirmed on this quote that the note it mints will be
-  // keyed by the `h` that was sent, not by the payment preimage. False
-  // means it said nothing about `h`, which is NOT the same as a refusal:
-  // the advertisement a WALLET decides on is `mintToHash` on the mint
-  // address, read before asking, and a SERVICE is free to accept the
+  // The SERVICE confirmed that THIS quote is bound to the `h` that was
+  // sent, so the note it mints will be keyed by that hash rather than by
+  // the payment preimage. Per quote, and the statement that matters at the
+  // moment money moves.
+  //
+  // False means the quote said nothing about `h`, which is NOT the same as
+  // a refusal: the advertisement a WALLET decides from is `mintToHash` on
+  // the payRequest, read before asking, and a SERVICE is free to accept the
   // parameter without echoing it back here. So treat this as a
   // confirmation when it arrives, and claim by probing either way.
   mintToHash: boolean
@@ -675,6 +696,10 @@ export type InvoiceRequestOptions = LnurlcashOptions & {
   // scheme, and persisting first removes it. Drawing it from
   // deriveNoteSecret rather than a CSPRNG makes the note seed-derived from
   // birth, so restoreNotes finds it without any rotate at all.
+  //
+  // Read `mintToHash` off the payRequest before sending this, falling back
+  // to the mint address document. A SERVICE that advertises neither ignores
+  // the parameter and keys the note by the preimage as it always has.
   //
   // Malformed input is refused here rather than sent, so a WALLET never
   // pays for a quote a SERVICE was going to reject.
